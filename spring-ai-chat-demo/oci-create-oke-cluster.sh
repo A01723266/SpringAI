@@ -10,6 +10,7 @@ NODE_SHAPE="${NODE_SHAPE:-VM.Standard.A1.Flex}"
 NODE_OCPUS="${NODE_OCPUS:-1}"
 NODE_MEMORY_GB="${NODE_MEMORY_GB:-6}"
 NODE_COUNT="${NODE_COUNT:-1}"
+NODE_IMAGE_NAME="${NODE_IMAGE_NAME:-}"
 VCN_CIDR="${VCN_CIDR:-10.90.0.0/16}"
 LB_SUBNET_CIDR="${LB_SUBNET_CIDR:-10.90.1.0/24}"
 NODE_SUBNET_CIDR="${NODE_SUBNET_CIDR:-10.90.2.0/24}"
@@ -190,15 +191,15 @@ if [[ -z "$CLUSTER_ID" || "$CLUSTER_ID" == "null" ]]; then
   exit 1
 fi
 
-step "Finding latest Oracle Linux image for node shape ${NODE_SHAPE}"
-NODE_IMAGE_ID="$(oci compute image list \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --operating-system "Oracle Linux" \
-  --shape "$NODE_SHAPE" \
-  --sort-by TIMECREATED \
-  --sort-order DESC \
-  --query 'data[0].id' \
-  --raw-output)"
+if [[ -z "$NODE_IMAGE_NAME" ]]; then
+  step "Finding OKE-supported node image"
+  NODE_IMAGE_NAME="$(oci ce node-pool-options get \
+    --node-pool-option-id "$CLUSTER_ID" \
+    --query 'data.sources[-1]."source-name"' \
+    --raw-output)"
+fi
+
+ask NODE_IMAGE_NAME "OKE node image name" "$NODE_IMAGE_NAME"
 
 step "Finding or creating node pool"
 NODE_POOL_ID="$(first_id "data[?name=='${NODE_POOL_NAME}' && \"lifecycle-state\"!='DELETED'] | [0].id" ce node-pool list --compartment-id "$COMPARTMENT_OCID" --cluster-id "$CLUSTER_ID")"
@@ -210,7 +211,7 @@ if [[ -z "$NODE_POOL_ID" || "$NODE_POOL_ID" == "null" ]]; then
     --kubernetes-version "$K8S_VERSION" \
     --node-shape "$NODE_SHAPE" \
     --node-shape-config "{\"ocpus\":${NODE_OCPUS},\"memoryInGBs\":${NODE_MEMORY_GB}}" \
-    --node-source-details "{\"sourceType\":\"IMAGE\",\"imageId\":\"${NODE_IMAGE_ID}\"}" \
+    --node-image-name "$NODE_IMAGE_NAME" \
     --placement-configs "[{\"availabilityDomain\":\"${AD1}\",\"subnetId\":\"${NODE_SUBNET_ID}\"}]" \
     --size "$NODE_COUNT" \
     --wait-for-state SUCCEEDED >/dev/null
