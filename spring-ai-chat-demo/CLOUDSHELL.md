@@ -13,7 +13,27 @@ cd spring-ai-chat-demo
 
 ## 2. Configure OKE access
 
-From the OKE cluster page in OCI Console, select **Access cluster**, choose **Cloud Shell Access**, and run the generated command. It looks like this:
+You can use the helper script:
+
+```bash
+export CLUSTER_OCID=<cluster-ocid>
+export OCI_REGION=<region>
+export OCIR_SERVER=<region-key>.ocir.io
+export OCIR_USERNAME='<tenancy-namespace>/<oci-username>'
+export OCIR_AUTH_TOKEN='<oci-auth-token>'
+export OCIR_EMAIL='<email>'
+bash cloudshell-prepare.sh
+```
+
+For federated users, `OCIR_USERNAME` usually includes the identity domain:
+
+```text
+<tenancy-namespace>/<identity-domain>/<email>
+```
+
+The script creates kubeconfig, verifies `kubectl get nodes`, lists StorageClasses, and creates or updates the Kubernetes image pull secret named `ocirsecret`.
+
+Alternatively, from the OKE cluster page in OCI Console, select **Access cluster**, choose **Cloud Shell Access**, and run the generated command. It looks like this:
 
 ```bash
 oci ce cluster create-kubeconfig \
@@ -59,7 +79,7 @@ iad.ocir.io/mytenancynamespace/demo/spring-ai-chat-demo
 
 ## 4. Allow OKE to pull from OCIR
 
-Create a registry secret in the target namespace:
+If you already ran `bash cloudshell-prepare.sh`, this is done. Otherwise, create a registry secret in the target namespace:
 
 ```bash
 kubectl create secret docker-registry ocirsecret \
