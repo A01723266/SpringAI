@@ -47,6 +47,12 @@ ask() {
   export "$var_name=$value"
 }
 
+first_id() {
+  local query_text="$1"
+  shift
+  oci "$@" --query "$query_text" --raw-output 2>/dev/null || true
+}
+
 need oci
 need kubectl
 
@@ -80,82 +86,109 @@ if [[ -z "$K8S_VERSION" ]]; then
 fi
 step "Using Kubernetes version ${K8S_VERSION}"
 
-step "Creating VCN"
-VCN_ID="$(oci network vcn create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --display-name "$VCN_NAME" \
-  --cidr-block "$VCN_CIDR" \
-  --wait-for-state AVAILABLE \
-  --query 'data.id' \
-  --raw-output)"
+step "Finding or creating VCN"
+VCN_ID="$(first_id "data[?\"display-name\"=='${VCN_NAME}' && \"lifecycle-state\"!='TERMINATED'] | [0].id" network vcn list --compartment-id "$COMPARTMENT_OCID")"
+if [[ -z "$VCN_ID" || "$VCN_ID" == "null" ]]; then
+  VCN_ID="$(oci network vcn create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --display-name "$VCN_NAME" \
+    --cidr-block "$VCN_CIDR" \
+    --wait-for-state AVAILABLE \
+    --query 'data.id' \
+    --raw-output)"
+fi
 
-step "Creating internet gateway"
-IGW_ID="$(oci network internet-gateway create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --vcn-id "$VCN_ID" \
-  --display-name "${VCN_NAME}-igw" \
-  --is-enabled true \
-  --wait-for-state AVAILABLE \
-  --query 'data.id' \
-  --raw-output)"
+step "Finding or creating internet gateway"
+IGW_ID="$(first_id "data[?\"display-name\"=='${VCN_NAME}-igw' && \"lifecycle-state\"!='TERMINATED'] | [0].id" network internet-gateway list --compartment-id "$COMPARTMENT_OCID" --vcn-id "$VCN_ID")"
+if [[ -z "$IGW_ID" || "$IGW_ID" == "null" ]]; then
+  IGW_ID="$(oci network internet-gateway create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --vcn-id "$VCN_ID" \
+    --display-name "${VCN_NAME}-igw" \
+    --is-enabled true \
+    --wait-for-state AVAILABLE \
+    --query 'data.id' \
+    --raw-output)"
+fi
 
-step "Creating route table"
-RT_ID="$(oci network route-table create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --vcn-id "$VCN_ID" \
-  --display-name "${VCN_NAME}-rt" \
-  --route-rules "[{\"cidrBlock\":\"0.0.0.0/0\",\"networkEntityId\":\"${IGW_ID}\"}]" \
-  --wait-for-state AVAILABLE \
-  --query 'data.id' \
-  --raw-output)"
+step "Finding or creating route table"
+RT_ID="$(first_id "data[?\"display-name\"=='${VCN_NAME}-rt' && \"lifecycle-state\"!='TERMINATED'] | [0].id" network route-table list --compartment-id "$COMPARTMENT_OCID" --vcn-id "$VCN_ID")"
+if [[ -z "$RT_ID" || "$RT_ID" == "null" ]]; then
+  RT_ID="$(oci network route-table create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --vcn-id "$VCN_ID" \
+    --display-name "${VCN_NAME}-rt" \
+    --route-rules "[{\"cidrBlock\":\"0.0.0.0/0\",\"networkEntityId\":\"${IGW_ID}\"}]" \
+    --wait-for-state AVAILABLE \
+    --query 'data.id' \
+    --raw-output)"
+fi
 
-step "Creating security list"
-SL_ID="$(oci network security-list create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --vcn-id "$VCN_ID" \
-  --display-name "${VCN_NAME}-sl" \
-  --egress-security-rules '[{"destination":"0.0.0.0/0","protocol":"all"}]' \
-  --ingress-security-rules '[{"source":"0.0.0.0/0","protocol":"all"}]' \
-  --wait-for-state AVAILABLE \
-  --query 'data.id' \
-  --raw-output)"
+step "Finding or creating security list"
+SL_ID="$(first_id "data[?\"display-name\"=='${VCN_NAME}-sl' && \"lifecycle-state\"!='TERMINATED'] | [0].id" network security-list list --compartment-id "$COMPARTMENT_OCID" --vcn-id "$VCN_ID")"
+if [[ -z "$SL_ID" || "$SL_ID" == "null" ]]; then
+  SL_ID="$(oci network security-list create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --vcn-id "$VCN_ID" \
+    --display-name "${VCN_NAME}-sl" \
+    --egress-security-rules '[{"destination":"0.0.0.0/0","protocol":"all"}]' \
+    --ingress-security-rules '[{"source":"0.0.0.0/0","protocol":"all"}]' \
+    --wait-for-state AVAILABLE \
+    --query 'data.id' \
+    --raw-output)"
+fi
 
-step "Creating public subnets"
-LB_SUBNET_ID="$(oci network subnet create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --vcn-id "$VCN_ID" \
-  --display-name "${VCN_NAME}-lb-subnet" \
-  --cidr-block "$LB_SUBNET_CIDR" \
-  --route-table-id "$RT_ID" \
-  --security-list-ids "[\"${SL_ID}\"]" \
-  --prohibit-public-ip-on-vnic false \
-  --wait-for-state AVAILABLE \
-  --query 'data.id' \
-  --raw-output)"
-NODE_SUBNET_ID="$(oci network subnet create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --vcn-id "$VCN_ID" \
-  --display-name "${VCN_NAME}-node-subnet" \
-  --cidr-block "$NODE_SUBNET_CIDR" \
-  --route-table-id "$RT_ID" \
-  --security-list-ids "[\"${SL_ID}\"]" \
-  --prohibit-public-ip-on-vnic false \
-  --wait-for-state AVAILABLE \
-  --query 'data.id' \
-  --raw-output)"
+step "Finding or creating public subnets"
+LB_SUBNET_ID="$(first_id "data[?\"display-name\"=='${VCN_NAME}-lb-subnet' && \"lifecycle-state\"!='TERMINATED'] | [0].id" network subnet list --compartment-id "$COMPARTMENT_OCID" --vcn-id "$VCN_ID")"
+if [[ -z "$LB_SUBNET_ID" || "$LB_SUBNET_ID" == "null" ]]; then
+  LB_SUBNET_ID="$(oci network subnet create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --vcn-id "$VCN_ID" \
+    --display-name "${VCN_NAME}-lb-subnet" \
+    --cidr-block "$LB_SUBNET_CIDR" \
+    --route-table-id "$RT_ID" \
+    --security-list-ids "[\"${SL_ID}\"]" \
+    --prohibit-public-ip-on-vnic false \
+    --wait-for-state AVAILABLE \
+    --query 'data.id' \
+    --raw-output)"
+fi
 
-step "Creating OKE cluster"
-CLUSTER_ID="$(oci ce cluster create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --name "$CLUSTER_NAME" \
-  --kubernetes-version "$K8S_VERSION" \
-  --vcn-id "$VCN_ID" \
-  --endpoint-subnet-id "$LB_SUBNET_ID" \
-  --service-lb-subnet-ids "[\"${LB_SUBNET_ID}\"]" \
-  --endpoint-public-ip-enabled true \
-  --wait-for-state ACTIVE \
-  --query 'data.id' \
-  --raw-output)"
+NODE_SUBNET_ID="$(first_id "data[?\"display-name\"=='${VCN_NAME}-node-subnet' && \"lifecycle-state\"!='TERMINATED'] | [0].id" network subnet list --compartment-id "$COMPARTMENT_OCID" --vcn-id "$VCN_ID")"
+if [[ -z "$NODE_SUBNET_ID" || "$NODE_SUBNET_ID" == "null" ]]; then
+  NODE_SUBNET_ID="$(oci network subnet create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --vcn-id "$VCN_ID" \
+    --display-name "${VCN_NAME}-node-subnet" \
+    --cidr-block "$NODE_SUBNET_CIDR" \
+    --route-table-id "$RT_ID" \
+    --security-list-ids "[\"${SL_ID}\"]" \
+    --prohibit-public-ip-on-vnic false \
+    --wait-for-state AVAILABLE \
+    --query 'data.id' \
+    --raw-output)"
+fi
+
+step "Finding or creating OKE cluster"
+CLUSTER_ID="$(first_id "data[?name=='${CLUSTER_NAME}' && \"lifecycle-state\"!='DELETED'] | [0].id" ce cluster list --compartment-id "$COMPARTMENT_OCID")"
+if [[ -z "$CLUSTER_ID" || "$CLUSTER_ID" == "null" ]]; then
+  oci ce cluster create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --name "$CLUSTER_NAME" \
+    --kubernetes-version "$K8S_VERSION" \
+    --vcn-id "$VCN_ID" \
+    --endpoint-subnet-id "$LB_SUBNET_ID" \
+    --service-lb-subnet-ids "[\"${LB_SUBNET_ID}\"]" \
+    --endpoint-public-ip-enabled true \
+    --wait-for-state SUCCEEDED >/dev/null
+
+  CLUSTER_ID="$(first_id "data[?name=='${CLUSTER_NAME}' && \"lifecycle-state\"!='DELETED'] | [0].id" ce cluster list --compartment-id "$COMPARTMENT_OCID")"
+fi
+
+if [[ -z "$CLUSTER_ID" || "$CLUSTER_ID" == "null" ]]; then
+  printf "Could not find or create OKE cluster %s.\n" "$CLUSTER_NAME" >&2
+  exit 1
+fi
 
 step "Finding latest Oracle Linux image for node shape ${NODE_SHAPE}"
 NODE_IMAGE_ID="$(oci compute image list \
@@ -167,20 +200,28 @@ NODE_IMAGE_ID="$(oci compute image list \
   --query 'data[0].id' \
   --raw-output)"
 
-step "Creating node pool"
-NODE_POOL_ID="$(oci ce node-pool create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --cluster-id "$CLUSTER_ID" \
-  --name "$NODE_POOL_NAME" \
-  --kubernetes-version "$K8S_VERSION" \
-  --node-shape "$NODE_SHAPE" \
-  --node-shape-config "{\"ocpus\":${NODE_OCPUS},\"memoryInGBs\":${NODE_MEMORY_GB}}" \
-  --node-source-details "{\"sourceType\":\"IMAGE\",\"imageId\":\"${NODE_IMAGE_ID}\"}" \
-  --placement-configs "[{\"availabilityDomain\":\"${AD1}\",\"subnetId\":\"${NODE_SUBNET_ID}\"}]" \
-  --size "$NODE_COUNT" \
-  --wait-for-state ACTIVE \
-  --query 'data.id' \
-  --raw-output)"
+step "Finding or creating node pool"
+NODE_POOL_ID="$(first_id "data[?name=='${NODE_POOL_NAME}' && \"lifecycle-state\"!='DELETED'] | [0].id" ce node-pool list --compartment-id "$COMPARTMENT_OCID" --cluster-id "$CLUSTER_ID")"
+if [[ -z "$NODE_POOL_ID" || "$NODE_POOL_ID" == "null" ]]; then
+  oci ce node-pool create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --cluster-id "$CLUSTER_ID" \
+    --name "$NODE_POOL_NAME" \
+    --kubernetes-version "$K8S_VERSION" \
+    --node-shape "$NODE_SHAPE" \
+    --node-shape-config "{\"ocpus\":${NODE_OCPUS},\"memoryInGBs\":${NODE_MEMORY_GB}}" \
+    --node-source-details "{\"sourceType\":\"IMAGE\",\"imageId\":\"${NODE_IMAGE_ID}\"}" \
+    --placement-configs "[{\"availabilityDomain\":\"${AD1}\",\"subnetId\":\"${NODE_SUBNET_ID}\"}]" \
+    --size "$NODE_COUNT" \
+    --wait-for-state SUCCEEDED >/dev/null
+
+  NODE_POOL_ID="$(first_id "data[?name=='${NODE_POOL_NAME}' && \"lifecycle-state\"!='DELETED'] | [0].id" ce node-pool list --compartment-id "$COMPARTMENT_OCID" --cluster-id "$CLUSTER_ID")"
+fi
+
+if [[ -z "$NODE_POOL_ID" || "$NODE_POOL_ID" == "null" ]]; then
+  printf "Could not find or create OKE node pool %s.\n" "$NODE_POOL_NAME" >&2
+  exit 1
+fi
 
 step "Creating kubeconfig"
 oci ce cluster create-kubeconfig \
