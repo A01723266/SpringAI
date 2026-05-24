@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spring AI Chat Demo</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="chat-shell" aria-label="Chat Spring AI con Ollama">
+    <header class="chat-header">
+      <div>
+        <h1>Spring AI Chat Demo</h1>
+        <p>Ollama · llama3.2:1b</p>
+      </div>
+      <button id="clearButton" class="secondary-button" type="button">Limpiar</button>
+    </header>
+
+    <section id="messages" class="messages" aria-live="polite"></section>
+
+    <div id="errorBox" class="error-box" role="alert" hidden></div>
+    <div id="loading" class="loading" hidden>Generando respuesta...</div>
+
+    <form id="chatForm" class="composer">
+      <label class="sr-only" for="promptInput">Mensaje</label>
+      <textarea id="promptInput" rows="2" placeholder="Escribe tu mensaje..." required></textarea>
+      <button id="sendButton" type="submit">Enviar</button>
+    </form>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
