@@ -1,127 +1,170 @@
-# Deploying from OCI Cloud Shell
+# Deploying from OCI Cloud Shell Without OKE
 
-These steps assume the local Docker version of the demo already works and the repository has been pushed to GitHub.
+This path is for an OCI Free Tier / Always Free setup without Kubernetes clusters. It uses:
 
-OCI Cloud Shell includes Git, Maven, kubectl, OCI CLI, and Podman. Docker Engine is not installed in Oracle Linux 8-based Cloud Shell, but OCI provides a Docker-compatible alias backed by Podman.
+- OCI Cloud Shell to build and push the Spring Boot app image to OCIR.
+- An Always Free Compute VM to run two containers:
+  - `ollama`, with a persistent container volume.
+  - `spring-ai-chat-demo`, connected to Ollama over an internal container network.
 
-## 1. Clone the repository
+OCI Cloud Shell uses Podman for container builds. Oracle also provides a Docker-compatible alias backed by Podman.
+
+## 1. Clone the Repository
 
 ```bash
 git clone <your-github-repo-url>
 cd spring-ai-chat-demo
 ```
 
-## 2. Configure OKE access
+## 2. Prepare Cloud Shell, Compartment, and OCIR
 
-You can use the helper script:
+Run:
 
 ```bash
-export CLUSTER_OCID=<cluster-ocid>
-export OCI_REGION=<region>
-export OCIR_SERVER=<region-key>.ocir.io
-export OCIR_USERNAME='<tenancy-namespace>/<oci-username>'
-export OCIR_AUTH_TOKEN='<oci-auth-token>'
-export OCIR_EMAIL='<email>'
 bash cloudshell-prepare.sh
 ```
 
-For federated users, `OCIR_USERNAME` usually includes the identity domain:
+The script discovers what it can and asks for the rest. If you already have a compartment, paste its OCID. If not, press Enter and it will use the tenancy/root compartment when OCI allows it.
 
-```text
-<tenancy-namespace>/<identity-domain>/<email>
-```
+- OCI region, for example `mx-queretaro-1`
+- compartment OCID, optional
+- OCIR region key, for example `qro`
+- tenancy namespace
+- OCIR repository path
+- OCIR username
+- OCI user OCID, used to create an auth token
+- OCI auth token, generated automatically when your permissions allow it
 
-The script creates kubeconfig, verifies `kubectl get nodes`, lists StorageClasses, and creates or updates the Kubernetes image pull secret named `ocirsecret`.
+It logs in to OCIR and writes:
 
-Alternatively, from the OKE cluster page in OCI Console, select **Access cluster**, choose **Cloud Shell Access**, and run the generated command. It looks like this:
+- `.cloudshell.env` for non-secret values
+- `.cloudshell.secrets.env` for the OCIR auth token
 
-```bash
-oci ce cluster create-kubeconfig \
-  --cluster-id <cluster-ocid> \
-  --file "$HOME/.kube/config" \
-  --region <region> \
-  --token-version 2.0.0 \
-  --kube-endpoint PUBLIC_ENDPOINT
-```
-
-Then verify:
+Load those settings:
 
 ```bash
-kubectl get nodes
-kubectl get storageclass
+source .cloudshell.env
+source .cloudshell.secrets.env
 ```
 
-If your OKE cluster does not have a default StorageClass, set one in `k8s/ollama-pvc.yaml` before deploying.
-
-## 3. Build and push the app image to OCIR
-
-Log in to OCIR with an OCI auth token, not your OCI account password:
+## 3. Build and Push the App Image
 
 ```bash
-podman login <region-key>.ocir.io
-```
-
-Build and push:
-
-```bash
-export IMAGE_NAME=spring-ai-chat-demo
-export IMAGE_TAG=v1
-export OCIR_REPOSITORY=<region-key>.ocir.io/<tenancy-namespace>/<repo>/spring-ai-chat-demo
-export PUSH_IMAGE=true
 bash build.sh
 ```
 
-Example repository format:
+This pushes:
 
 ```text
-iad.ocir.io/mytenancynamespace/demo/spring-ai-chat-demo
+<region-key>.ocir.io/<tenancy-namespace>/<repo-path>:v1
 ```
 
-## 4. Allow OKE to pull from OCIR
+## 4. Create an Always Free Compute VM
 
-If you already ran `bash cloudshell-prepare.sh`, this is done. Otherwise, create a registry secret in the target namespace:
+You can create the basic VM/network/SSH key from Cloud Shell:
 
 ```bash
-kubectl create secret docker-registry ocirsecret \
-  --docker-server=<region-key>.ocir.io \
-  --docker-username='<tenancy-namespace>/<oci-username>' \
-  --docker-password='<oci-auth-token>' \
-  --docker-email='<email>'
+bash oci-create-free-vm.sh
 ```
 
-If your user is federated, the username usually includes the identity domain:
+The script asks for your compartment OCID and region, then creates:
 
-```text
-<tenancy-namespace>/<identity-domain>/<email>
-```
+- SSH key under `~/.ssh/spring-ai-chat-demo`
+- VCN, public subnet, internet gateway, route table, and security list
+- inbound rules for SSH `22` and app port `8080`
+- Always Free eligible Compute VM using `VM.Standard.A1.Flex`
 
-The deployment already references a secret named `ocirsecret`, so use that exact name unless you also update `k8s/app-deployment.yaml`.
+It writes the VM connection values to `.oci-vm.env`.
 
-## 5. Deploy
+Alternatively, create the VM manually in OCI Console. Recommended:
+
+- Image: Oracle Linux
+- Shape: Ampere A1 Flex if available
+- Public IP: enabled
+- SSH key: your Cloud Shell public key or another key you control
+
+Open inbound TCP `8080` in the VM security list or NSG if you want browser access from the internet.
+
+## 5. Deploy Containers to the VM
+
+Run from Cloud Shell:
 
 ```bash
-export APP_IMAGE=<region-key>.ocir.io/<tenancy-namespace>/<repo>/spring-ai-chat-demo:v1
-bash deploy.sh
+source .cloudshell.env
+source .cloudshell.secrets.env
+source .oci-vm.env
+bash vm-deploy.sh
 ```
 
-The deploy script creates Ollama with a PVC, waits for it to be ready, pulls `llama3.2:1b` into the PVC, and deploys the Spring Boot app.
+The script asks for the VM public IP or DNS and then creates:
 
-## 6. Test with port-forward
+- container network `spring-ai-demo-net`
+- volume `ollama`
+- container `ollama`
+- container `spring-ai-chat-demo`
 
-```bash
-kubectl port-forward service/spring-ai-chat-demo-service 8080:8080
-```
+It pulls `llama3.2:1b` into the VM's Ollama volume if missing.
 
 Open:
 
 ```text
-http://localhost:8080
+http://<vm-public-ip>:8080
 ```
 
-## 7. Undeploy
+## Useful Overrides
+
+Use another image tag:
 
 ```bash
-bash undeploy.sh
+export IMAGE_TAG=v2
+bash build.sh
+export APP_IMAGE="$OCIR_REPOSITORY:v2"
+bash vm-deploy.sh
 ```
 
-The script removes only this demo's Deployment and Service resources. It does not delete the Ollama PVC automatically.
+Use another public port:
+
+```bash
+export APP_PORT=8081
+bash vm-deploy.sh
+```
+
+Use a specific SSH key:
+
+```bash
+export SSH_KEY="$HOME/.ssh/id_rsa"
+bash vm-deploy.sh
+```
+
+## Stop the App on the VM
+
+SSH into the VM and run:
+
+```bash
+podman rm -f spring-ai-chat-demo
+podman rm -f ollama
+```
+
+The `ollama` volume is not deleted automatically.
+
+## Optional: Create an OKE Cluster
+
+If your tenancy/compartment allows OKE, you can create a small OKE cluster:
+
+```bash
+source .cloudshell.env
+bash oci-create-oke-cluster.sh
+source .oci-oke.env
+```
+
+Then build/push and deploy with the Kubernetes manifests:
+
+```bash
+source .cloudshell.env
+source .cloudshell.secrets.env
+bash build.sh
+export APP_IMAGE="$OCIR_REPOSITORY:$IMAGE_TAG"
+bash deploy.sh
+```
+
+OKE can incur charges depending on your account, region, shapes, storage, and load balancers. The default app service is `ClusterIP`, but the OKE control plane, nodes, storage, and networking still belong to your OCI tenancy.

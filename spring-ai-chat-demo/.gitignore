@@ -1,5 +1,9 @@
 HELP.md
 target/
+.cloudshell.env
+.cloudshell.secrets.env
+.oci-vm.env
+.oci-oke.env
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
