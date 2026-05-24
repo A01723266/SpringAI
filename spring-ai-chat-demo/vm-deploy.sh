@@ -10,6 +10,8 @@ SSH_KEY="${SSH_KEY:-}"
 APP_PORT="${APP_PORT:-8080}"
 OLLAMA_VOLUME="${OLLAMA_VOLUME:-ollama}"
 NETWORK_NAME="${NETWORK_NAME:-spring-ai-demo-net}"
+OCIR_REGISTRY="${OCIR_REGISTRY:-${OCIR_SERVER:-mx-queretaro-1.ocir.io}}"
+OCIR_USERNAME="${OCIR_USERNAME:-qazwsx.qazwsx244000@gmail.com}"
 
 step() {
   printf '[vm-deploy] %s\n' "$1"
@@ -78,7 +80,7 @@ fi
 
 ask VM_HOST "Public IP or DNS of the Always Free compute VM"
 ask VM_USER "SSH user" "$VM_USER"
-ask OCIR_SERVER "OCIR server"
+ask OCIR_REGISTRY "OCIR registry" "$OCIR_REGISTRY"
 ask OCIR_USERNAME "OCIR username"
 ask_secret OCIR_AUTH_TOKEN "OCI auth token for remote OCIR login"
 
@@ -95,7 +97,7 @@ OLLAMA_MODEL='${OLLAMA_MODEL}'
 APP_PORT='${APP_PORT}'
 OLLAMA_VOLUME='${OLLAMA_VOLUME}'
 NETWORK_NAME='${NETWORK_NAME}'
-OCIR_SERVER='${OCIR_SERVER}'
+OCIR_REGISTRY='${OCIR_REGISTRY}'
 OCIR_USERNAME='${OCIR_USERNAME}'
 OCIR_AUTH_TOKEN='${OCIR_AUTH_TOKEN}'
 EOF
@@ -116,8 +118,8 @@ fi
 
 echo "[remote] Using ${CLI}"
 
-echo "[remote] Logging in to ${OCIR_SERVER}"
-printf '%s' "${OCIR_AUTH_TOKEN}" | "${CLI}" login "${OCIR_SERVER}" --username "${OCIR_USERNAME}" --password-stdin
+echo "[remote] Logging in to ${OCIR_REGISTRY}"
+printf '%s' "${OCIR_AUTH_TOKEN}" | "${CLI}" login "${OCIR_REGISTRY}" --username "${OCIR_USERNAME}" --password-stdin
 
 "${CLI}" network exists "${NETWORK_NAME}" >/dev/null 2>&1 || "${CLI}" network create "${NETWORK_NAME}"
 "${CLI}" volume exists "${OLLAMA_VOLUME}" >/dev/null 2>&1 || "${CLI}" volume create "${OLLAMA_VOLUME}"

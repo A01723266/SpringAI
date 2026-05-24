@@ -24,51 +24,23 @@ Run:
 bash cloudshell-prepare.sh
 ```
 
-The script discovers what it can and uses detected defaults automatically. If something cannot be detected, it asks only for that missing value. By default it uses the tenancy/root compartment when OCI allows it.
-
-- OCI region, for example `mx-queretaro-1`
-- compartment OCID, optional and usually auto-filled with tenancy/root
-- OCIR region key, for example `qro`, used only as a fallback
-- tenancy namespace
-- OCIR repository path
-- OCIR username
-- OCI user OCID, used to create an auth token
-- OCI auth token, generated automatically when your permissions allow it
-
-For OCIR, the script uses Oracle's recommended endpoint format by default:
-
-```text
-ocir.<region-identifier>.oci.oraclecloud.com
-```
-
-For Queretaro that is:
-
-```text
-ocir.mx-queretaro-1.oci.oraclecloud.com
-```
-
-If login fails, the script also tries the legacy OC1 endpoint:
-
-```text
-qro.ocir.io
-```
-
-To force the script to ask before accepting detected defaults:
+The script uses the OCIR login settings that were verified to work:
 
 ```bash
-AUTO_ACCEPT_DEFAULTS=false bash cloudshell-prepare.sh
+OCIR_REGISTRY="mx-queretaro-1.ocir.io"
+OCIR_USERNAME="qazwsx.qazwsx244000@gmail.com"
+OCIR_NAMESPACE="axthosg61i3c"
+OCIR_REPO_PATH="spring-ai-chat-demo"
 ```
 
-It logs in to OCIR and writes:
+The namespace is used only in the image path, not in the login username.
 
-- `.cloudshell.env` for non-secret values
-- `.cloudshell.secrets.env` for the OCIR auth token
+- OCI auth token, requested interactively and used only for login
 
 Load those settings:
 
 ```bash
 source .cloudshell.env
-source .cloudshell.secrets.env
 ```
 
 ## 3. Build and Push the App Image
@@ -115,7 +87,6 @@ Run from Cloud Shell:
 
 ```bash
 source .cloudshell.env
-source .cloudshell.secrets.env
 source .oci-vm.env
 bash vm-deploy.sh
 ```
@@ -185,7 +156,6 @@ Then build/push and deploy with the Kubernetes manifests:
 
 ```bash
 source .cloudshell.env
-source .cloudshell.secrets.env
 bash build.sh
 export APP_IMAGE="$OCIR_REPOSITORY:$IMAGE_TAG"
 bash deploy.sh

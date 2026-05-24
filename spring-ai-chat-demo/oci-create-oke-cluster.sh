@@ -196,5 +196,5 @@ chmod 600 "$ENV_FILE"
 
 step "OKE cluster created"
 step "Wrote settings to ${ENV_FILE}"
-step "Next: source .cloudshell.env && source .cloudshell.secrets.env && source ${ENV_FILE}"
+step "Next: source .cloudshell.env && source ${ENV_FILE}"
 step "Then: bash build.sh && export APP_IMAGE=\"\$OCIR_REPOSITORY:\$IMAGE_TAG\" && bash deploy.sh"

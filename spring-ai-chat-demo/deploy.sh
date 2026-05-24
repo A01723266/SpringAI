@@ -3,10 +3,45 @@ set -euo pipefail
 
 APP_IMAGE="${APP_IMAGE:-spring-ai-chat-demo:local}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2:1b}"
+CREATE_OCIR_SECRET="${CREATE_OCIR_SECRET:-true}"
+OCIR_SECRET_NAME="${OCIR_SECRET_NAME:-ocirsecret}"
+OCIR_REGISTRY="${OCIR_REGISTRY:-${OCIR_SERVER:-mx-queretaro-1.ocir.io}}"
+OCIR_USERNAME="${OCIR_USERNAME:-qazwsx.qazwsx244000@gmail.com}"
 
 step() {
   printf '[deploy] %s\n' "$1"
 }
+
+ask_secret() {
+  local var_name="$1"
+  local prompt="$2"
+  local value
+
+  if [[ -n "${!var_name:-}" ]]; then
+    return
+  fi
+
+  read -r -s -p "${prompt}: " value
+  printf '\n'
+
+  if [[ -z "$value" ]]; then
+    printf "%s is required.\n" "$var_name" >&2
+    exit 1
+  fi
+
+  export "$var_name=$value"
+}
+
+if [[ "$CREATE_OCIR_SECRET" == "true" && "$APP_IMAGE" == "${OCIR_REGISTRY}"/* ]]; then
+  ask_secret OCIR_AUTH_TOKEN "OCI auth token for Kubernetes image pull secret"
+  step "Creating/updating Kubernetes image pull secret ${OCIR_SECRET_NAME}"
+  kubectl create secret docker-registry "$OCIR_SECRET_NAME" \
+    --docker-server="$OCIR_REGISTRY" \
+    --docker-username="$OCIR_USERNAME" \
+    --docker-password="$OCIR_AUTH_TOKEN" \
+    --dry-run=client \
+    -o yaml | kubectl apply -f -
+fi
 
 step "Applying Ollama PVC, deployment, and service"
 kubectl apply -f k8s/ollama-pvc.yaml
