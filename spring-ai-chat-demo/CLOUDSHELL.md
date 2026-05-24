@@ -24,16 +24,22 @@ Run:
 bash cloudshell-prepare.sh
 ```
 
-The script discovers what it can and asks for the rest. If you already have a compartment, paste its OCID. If not, press Enter and it will use the tenancy/root compartment when OCI allows it.
+The script discovers what it can and uses detected defaults automatically. If something cannot be detected, it asks only for that missing value. By default it uses the tenancy/root compartment when OCI allows it.
 
 - OCI region, for example `mx-queretaro-1`
-- compartment OCID, optional
+- compartment OCID, optional and usually auto-filled with tenancy/root
 - OCIR region key, for example `qro`
 - tenancy namespace
 - OCIR repository path
 - OCIR username
 - OCI user OCID, used to create an auth token
 - OCI auth token, generated automatically when your permissions allow it
+
+To force the script to ask before accepting detected defaults:
+
+```bash
+AUTO_ACCEPT_DEFAULTS=false bash cloudshell-prepare.sh
+```
 
 It logs in to OCIR and writes:
 

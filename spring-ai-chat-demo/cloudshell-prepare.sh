@@ -4,6 +4,7 @@ set -euo pipefail
 ENV_FILE="${ENV_FILE:-.cloudshell.env}"
 SECRETS_FILE="${SECRETS_FILE:-.cloudshell.secrets.env}"
 AUTH_TOKEN_DESCRIPTION="${AUTH_TOKEN_DESCRIPTION:-spring-ai-chat-demo-ocir}"
+AUTO_ACCEPT_DEFAULTS="${AUTO_ACCEPT_DEFAULTS:-true}"
 
 step() {
   printf '[cloudshell] %s\n' "$1"
@@ -28,6 +29,12 @@ ask_optional() {
   local value
 
   if [[ -n "$current_value" ]]; then
+    return
+  fi
+
+  if [[ "$AUTO_ACCEPT_DEFAULTS" == "true" && -n "$default_value" ]]; then
+    export "$var_name=$default_value"
+    step "Using ${var_name}=${default_value}"
     return
   fi
 
@@ -199,8 +206,12 @@ fi
 ask_required OCIR_USERNAME "OCIR username" "$DEFAULT_OCIR_USERNAME"
 
 if [[ -z "${OCIR_AUTH_TOKEN:-}" ]]; then
-  read -r -p "Create a new OCI auth token for OCIR now? [Y/n]: " CREATE_TOKEN
-  CREATE_TOKEN="${CREATE_TOKEN:-Y}"
+  if [[ "$AUTO_ACCEPT_DEFAULTS" == "true" ]]; then
+    CREATE_TOKEN="Y"
+  else
+    read -r -p "Create a new OCI auth token for OCIR now? [Y/n]: " CREATE_TOKEN
+    CREATE_TOKEN="${CREATE_TOKEN:-Y}"
+  fi
   if [[ "$CREATE_TOKEN" =~ ^[Yy]$ ]]; then
     step "Creating OCI auth token '${AUTH_TOKEN_DESCRIPTION}' for user ${USER_OCID}"
     OCIR_AUTH_TOKEN="$(create_auth_token "$USER_OCID")"
