@@ -14,7 +14,7 @@ SUBNET_CIDR="${SUBNET_CIDR:-10.80.1.0/24}"
 SHAPE="${SHAPE:-VM.Standard.A1.Flex}"
 OCPUS="${OCPUS:-1}"
 MEMORY_GB="${MEMORY_GB:-6}"
-BOOT_VOLUME_GB="${BOOT_VOLUME_GB:-50}"
+BOOT_VOLUME_GB="${BOOT_VOLUME_GB:-}"
 APP_PORT="${APP_PORT:-8080}"
 
 step() {
@@ -58,13 +58,10 @@ query() {
   oci "$@" --raw-output
 }
 
-wait_for_lifecycle() {
-  local resource_type="$1"
-  local resource_id="$2"
-  local desired_state="$3"
-
-  step "Waiting for ${resource_type} ${resource_id} to become ${desired_state}"
-  oci "$resource_type" get --"${resource_type##* }"-id "$resource_id" >/dev/null 2>&1 || true
+first_id() {
+  local query_text="$1"
+  shift
+  oci "$@" --query "$query_text" --raw-output 2>/dev/null || true
 }
 
 need oci
@@ -97,58 +94,73 @@ AD_NAME="$(oci iam availability-domain list \
   --query 'data[0].name' \
   --raw-output)"
 
-step "Creating VCN"
-VCN_ID="$(oci network vcn create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --display-name "$VCN_NAME" \
-  --cidr-block "$VCN_CIDR" \
-  --wait-for-state AVAILABLE \
-  --query 'data.id' \
-  --raw-output)"
+step "Finding or creating VCN"
+VCN_ID="$(first_id "data[?\"display-name\"=='${VCN_NAME}' && \"lifecycle-state\"!='TERMINATED'] | [0].id" network vcn list --compartment-id "$COMPARTMENT_OCID")"
+if [[ -z "$VCN_ID" || "$VCN_ID" == "null" ]]; then
+  VCN_ID="$(oci network vcn create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --display-name "$VCN_NAME" \
+    --cidr-block "$VCN_CIDR" \
+    --wait-for-state AVAILABLE \
+    --query 'data.id' \
+    --raw-output)"
+fi
 
-step "Creating internet gateway"
-IGW_ID="$(oci network internet-gateway create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --vcn-id "$VCN_ID" \
-  --display-name "$IGW_NAME" \
-  --is-enabled true \
-  --wait-for-state AVAILABLE \
-  --query 'data.id' \
-  --raw-output)"
+step "Finding or creating internet gateway"
+IGW_ID="$(first_id "data[?\"display-name\"=='${IGW_NAME}' && \"lifecycle-state\"!='TERMINATED'] | [0].id" network internet-gateway list --compartment-id "$COMPARTMENT_OCID" --vcn-id "$VCN_ID")"
+if [[ -z "$IGW_ID" || "$IGW_ID" == "null" ]]; then
+  IGW_ID="$(oci network internet-gateway create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --vcn-id "$VCN_ID" \
+    --display-name "$IGW_NAME" \
+    --is-enabled true \
+    --wait-for-state AVAILABLE \
+    --query 'data.id' \
+    --raw-output)"
+fi
 
-step "Creating route table"
-ROUTE_TABLE_ID="$(oci network route-table create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --vcn-id "$VCN_ID" \
-  --display-name "$ROUTE_TABLE_NAME" \
-  --route-rules "[{\"cidrBlock\":\"0.0.0.0/0\",\"networkEntityId\":\"${IGW_ID}\"}]" \
-  --wait-for-state AVAILABLE \
-  --query 'data.id' \
-  --raw-output)"
+step "Finding or creating route table"
+ROUTE_TABLE_ID="$(first_id "data[?\"display-name\"=='${ROUTE_TABLE_NAME}' && \"lifecycle-state\"!='TERMINATED'] | [0].id" network route-table list --compartment-id "$COMPARTMENT_OCID" --vcn-id "$VCN_ID")"
+if [[ -z "$ROUTE_TABLE_ID" || "$ROUTE_TABLE_ID" == "null" ]]; then
+  ROUTE_TABLE_ID="$(oci network route-table create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --vcn-id "$VCN_ID" \
+    --display-name "$ROUTE_TABLE_NAME" \
+    --route-rules "[{\"cidrBlock\":\"0.0.0.0/0\",\"networkEntityId\":\"${IGW_ID}\"}]" \
+    --wait-for-state AVAILABLE \
+    --query 'data.id' \
+    --raw-output)"
+fi
 
-step "Creating security list for SSH and app port ${APP_PORT}"
-SECURITY_LIST_ID="$(oci network security-list create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --vcn-id "$VCN_ID" \
-  --display-name "$SECURITY_LIST_NAME" \
-  --egress-security-rules '[{"destination":"0.0.0.0/0","protocol":"all"}]' \
-  --ingress-security-rules "[{\"source\":\"0.0.0.0/0\",\"protocol\":\"6\",\"tcpOptions\":{\"destinationPortRange\":{\"min\":22,\"max\":22}}},{\"source\":\"0.0.0.0/0\",\"protocol\":\"6\",\"tcpOptions\":{\"destinationPortRange\":{\"min\":${APP_PORT},\"max\":${APP_PORT}}}}]" \
-  --wait-for-state AVAILABLE \
-  --query 'data.id' \
-  --raw-output)"
+step "Finding or creating security list for SSH and app port ${APP_PORT}"
+SECURITY_LIST_ID="$(first_id "data[?\"display-name\"=='${SECURITY_LIST_NAME}' && \"lifecycle-state\"!='TERMINATED'] | [0].id" network security-list list --compartment-id "$COMPARTMENT_OCID" --vcn-id "$VCN_ID")"
+if [[ -z "$SECURITY_LIST_ID" || "$SECURITY_LIST_ID" == "null" ]]; then
+  SECURITY_LIST_ID="$(oci network security-list create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --vcn-id "$VCN_ID" \
+    --display-name "$SECURITY_LIST_NAME" \
+    --egress-security-rules '[{"destination":"0.0.0.0/0","protocol":"all"}]' \
+    --ingress-security-rules "[{\"source\":\"0.0.0.0/0\",\"protocol\":\"6\",\"tcpOptions\":{\"destinationPortRange\":{\"min\":22,\"max\":22}}},{\"source\":\"0.0.0.0/0\",\"protocol\":\"6\",\"tcpOptions\":{\"destinationPortRange\":{\"min\":${APP_PORT},\"max\":${APP_PORT}}}}]" \
+    --wait-for-state AVAILABLE \
+    --query 'data.id' \
+    --raw-output)"
+fi
 
-step "Creating public subnet"
-SUBNET_ID="$(oci network subnet create \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --vcn-id "$VCN_ID" \
-  --display-name "$SUBNET_NAME" \
-  --cidr-block "$SUBNET_CIDR" \
-  --route-table-id "$ROUTE_TABLE_ID" \
-  --security-list-ids "[\"${SECURITY_LIST_ID}\"]" \
-  --prohibit-public-ip-on-vnic false \
-  --wait-for-state AVAILABLE \
-  --query 'data.id' \
-  --raw-output)"
+step "Finding or creating public subnet"
+SUBNET_ID="$(first_id "data[?\"display-name\"=='${SUBNET_NAME}' && \"lifecycle-state\"!='TERMINATED'] | [0].id" network subnet list --compartment-id "$COMPARTMENT_OCID" --vcn-id "$VCN_ID")"
+if [[ -z "$SUBNET_ID" || "$SUBNET_ID" == "null" ]]; then
+  SUBNET_ID="$(oci network subnet create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --vcn-id "$VCN_ID" \
+    --display-name "$SUBNET_NAME" \
+    --cidr-block "$SUBNET_CIDR" \
+    --route-table-id "$ROUTE_TABLE_ID" \
+    --security-list-ids "[\"${SECURITY_LIST_ID}\"]" \
+    --prohibit-public-ip-on-vnic false \
+    --wait-for-state AVAILABLE \
+    --query 'data.id' \
+    --raw-output)"
+fi
 
 step "Finding latest Oracle Linux image for ${SHAPE}"
 IMAGE_ID="$(oci compute image list \
@@ -161,13 +173,17 @@ IMAGE_ID="$(oci compute image list \
   --raw-output)"
 
 step "Creating Always Free eligible compute instance"
+SOURCE_DETAILS="{\"sourceType\":\"image\",\"imageId\":\"${IMAGE_ID}\"}"
+if [[ -n "$BOOT_VOLUME_GB" ]]; then
+  SOURCE_DETAILS="{\"sourceType\":\"image\",\"imageId\":\"${IMAGE_ID}\",\"bootVolumeSizeInGBs\":${BOOT_VOLUME_GB}}"
+fi
 INSTANCE_ID="$(oci compute instance launch \
   --compartment-id "$COMPARTMENT_OCID" \
   --availability-domain "$AD_NAME" \
   --display-name "$VM_NAME" \
   --shape "$SHAPE" \
   --shape-config "{\"ocpus\":${OCPUS},\"memoryInGBs\":${MEMORY_GB}}" \
-  --source-details "{\"sourceType\":\"image\",\"imageId\":\"${IMAGE_ID}\",\"bootVolumeSizeInGBs\":${BOOT_VOLUME_GB}}" \
+  --source-details "$SOURCE_DETAILS" \
   --subnet-id "$SUBNET_ID" \
   --assign-public-ip true \
   --metadata "{\"ssh_authorized_keys\":\"${PUBLIC_KEY}\"}" \
@@ -202,4 +218,4 @@ chmod 600 "$ENV_FILE"
 
 step "VM created: ${VM_PUBLIC_IP}"
 step "Wrote VM settings to ${ENV_FILE}"
-step "Next: source .cloudshell.env && source ${ENV_FILE} && bash vm-deploy.sh"
+step "Next: source ${ENV_FILE} && bash vm-build-deploy-from-git.sh"
