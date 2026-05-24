@@ -82,7 +82,7 @@ need oci
 CONTAINER_CLI="$(detect_container_cli)"
 
 detect_region() {
-  local region
+  local region=""
   region="${OCI_CLI_REGION:-${OCI_REGION:-}}"
   if [[ -z "$region" && -f "$HOME/.oci/config" ]]; then
     region="$(awk -F= '/^[[:space:]]*region[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$HOME/.oci/config" 2>/dev/null || true)"
@@ -94,7 +94,7 @@ detect_region() {
 }
 
 detect_tenancy_ocid() {
-  local tenancy
+  local tenancy=""
   tenancy="$(oci iam region-subscription list --query 'data[0]."tenancy-id"' --raw-output 2>/dev/null || true)"
   if [[ -z "$tenancy" || "$tenancy" == "null" ]]; then
     tenancy="$(awk -F= '/^[[:space:]]*tenancy[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$HOME/.oci/config" 2>/dev/null || true)"
@@ -107,7 +107,8 @@ detect_namespace() {
 }
 
 detect_user_name() {
-  local user_ocid user_name
+  local user_ocid=""
+  local user_name=""
   user_ocid="$(awk -F= '/^[[:space:]]*user[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$HOME/.oci/config" 2>/dev/null || true)"
   if [[ -n "$user_ocid" ]]; then
     user_name="$(oci iam user get --user-id "$user_ocid" --query 'data.name' --raw-output 2>/dev/null || true)"

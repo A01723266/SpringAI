@@ -51,7 +51,7 @@ need oci
 need kubectl
 
 detect_region() {
-  local region
+  local region=""
   region="${OCI_CLI_REGION:-${OCI_REGION:-}}"
   if [[ -z "$region" && -f "$HOME/.oci/config" ]]; then
     region="$(awk -F= '/^[[:space:]]*region[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$HOME/.oci/config" 2>/dev/null || true)"
