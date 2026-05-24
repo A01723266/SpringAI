@@ -28,12 +28,16 @@ The script uses the OCIR login settings that were verified to work:
 
 ```bash
 OCIR_REGISTRY="mx-queretaro-1.ocir.io"
-OCIR_USERNAME="qazwsx.qazwsx244000@gmail.com"
+OCIR_USERNAME="axthosg61i3c/qazwsx.qazwsx244000@gmail.com"
 OCIR_NAMESPACE="axthosg61i3c"
 OCIR_REPO_PATH="spring-ai-chat-demo"
 ```
 
-The namespace is used only in the image path, not in the login username.
+For this tenancy, the namespace is also required in the login username. The image path still keeps the namespace separately:
+
+```text
+mx-queretaro-1.ocir.io/axthosg61i3c/spring-ai-chat-demo:<tag>
+```
 
 - OCI auth token, requested interactively and used only for login
 

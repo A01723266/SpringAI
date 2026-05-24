@@ -6,7 +6,7 @@ OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2:1b}"
 CREATE_OCIR_SECRET="${CREATE_OCIR_SECRET:-true}"
 OCIR_SECRET_NAME="${OCIR_SECRET_NAME:-ocirsecret}"
 OCIR_REGISTRY="${OCIR_REGISTRY:-${OCIR_SERVER:-mx-queretaro-1.ocir.io}}"
-OCIR_USERNAME="${OCIR_USERNAME:-qazwsx.qazwsx244000@gmail.com}"
+OCIR_USERNAME="${OCIR_USERNAME:-axthosg61i3c/qazwsx.qazwsx244000@gmail.com}"
 
 step() {
   printf '[deploy] %s\n' "$1"

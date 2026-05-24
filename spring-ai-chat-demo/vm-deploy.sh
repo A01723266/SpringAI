@@ -11,7 +11,7 @@ APP_PORT="${APP_PORT:-8080}"
 OLLAMA_VOLUME="${OLLAMA_VOLUME:-ollama}"
 NETWORK_NAME="${NETWORK_NAME:-spring-ai-demo-net}"
 OCIR_REGISTRY="${OCIR_REGISTRY:-${OCIR_SERVER:-mx-queretaro-1.ocir.io}}"
-OCIR_USERNAME="${OCIR_USERNAME:-qazwsx.qazwsx244000@gmail.com}"
+OCIR_USERNAME="${OCIR_USERNAME:-axthosg61i3c/qazwsx.qazwsx244000@gmail.com}"
 
 step() {
   printf '[vm-deploy] %s\n' "$1"
