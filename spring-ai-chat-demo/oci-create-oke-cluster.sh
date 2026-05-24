@@ -6,9 +6,9 @@ CLUSTER_NAME="${CLUSTER_NAME:-spring-ai-chat-demo-oke}"
 VCN_NAME="${VCN_NAME:-spring-ai-chat-demo-oke-vcn}"
 NODE_POOL_NAME="${NODE_POOL_NAME:-spring-ai-chat-demo-pool}"
 K8S_VERSION="${K8S_VERSION:-}"
-NODE_SHAPE="${NODE_SHAPE:-VM.Standard.A1.Flex}"
+NODE_SHAPE="${NODE_SHAPE:-VM.Standard.E4.Flex}"
 NODE_OCPUS="${NODE_OCPUS:-1}"
-NODE_MEMORY_GB="${NODE_MEMORY_GB:-6}"
+NODE_MEMORY_GB="${NODE_MEMORY_GB:-8}"
 NODE_COUNT="${NODE_COUNT:-1}"
 NODE_IMAGE_NAME="${NODE_IMAGE_NAME:-}"
 NODE_IMAGE_ID="${NODE_IMAGE_ID:-}"
@@ -78,6 +78,9 @@ REGION_DEFAULT="$(detect_region)"
 
 ask COMPARTMENT_OCID "Compartment OCID for OKE. Press Enter to use tenancy/root" "$TENANCY_OCID"
 ask OCI_REGION "OCI region" "$REGION_DEFAULT"
+ask NODE_SHAPE "OKE node shape" "$NODE_SHAPE"
+ask NODE_OCPUS "OKE node OCPUs" "$NODE_OCPUS"
+ask NODE_MEMORY_GB "OKE node memory GB" "$NODE_MEMORY_GB"
 export OCI_CLI_REGION="$OCI_REGION"
 
 step "Finding availability domains"
@@ -194,15 +197,27 @@ fi
 
 if [[ -z "$NODE_IMAGE_ID" ]]; then
   step "Finding OKE-supported node image"
-  NODE_IMAGE_ID="$(oci ce node-pool-options get \
-    --node-pool-option-id "$CLUSTER_ID" \
-    --query 'data.sources[-1]."image-id"' \
-    --raw-output)"
+  if [[ "$NODE_SHAPE" == *".A1."* || "$NODE_SHAPE" == *".A2."* ]]; then
+    NODE_IMAGE_ID="$(oci ce node-pool-options get \
+      --node-pool-option-id "$CLUSTER_ID" \
+      --query 'data.sources[?contains("source-name", `aarch64`)] | [-1]."image-id"' \
+      --raw-output)"
 
-  NODE_IMAGE_NAME="$(oci ce node-pool-options get \
-    --node-pool-option-id "$CLUSTER_ID" \
-    --query 'data.sources[-1]."source-name"' \
-    --raw-output 2>/dev/null || true)"
+    NODE_IMAGE_NAME="$(oci ce node-pool-options get \
+      --node-pool-option-id "$CLUSTER_ID" \
+      --query 'data.sources[?contains("source-name", `aarch64`)] | [-1]."source-name"' \
+      --raw-output 2>/dev/null || true)"
+  else
+    NODE_IMAGE_ID="$(oci ce node-pool-options get \
+      --node-pool-option-id "$CLUSTER_ID" \
+      --query 'data.sources[?!contains("source-name", `aarch64`)] | [-1]."image-id"' \
+      --raw-output)"
+
+    NODE_IMAGE_NAME="$(oci ce node-pool-options get \
+      --node-pool-option-id "$CLUSTER_ID" \
+      --query 'data.sources[?!contains("source-name", `aarch64`)] | [-1]."source-name"' \
+      --raw-output 2>/dev/null || true)"
+  fi
 fi
 
 if [[ "$NODE_IMAGE_ID" == "null" ]]; then
