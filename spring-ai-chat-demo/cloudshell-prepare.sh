@@ -27,8 +27,13 @@ ask() {
   local default_value="${3:-}"
   local value
 
-  if [[ -n "${!var_name:-}" ]]; then
+  if [[ -n "${!var_name:-}" && "${!var_name}" != *"<"* && "${!var_name}" != *">"* ]]; then
     return
+  fi
+
+  if [[ -n "${!var_name:-}" && ( "${!var_name}" == *"<"* || "${!var_name}" == *">"* ) ]]; then
+    step "Ignoring placeholder value for ${var_name}: ${!var_name}"
+    unset "$var_name"
   fi
 
   read -r -p "${prompt} [${default_value}]: " value
