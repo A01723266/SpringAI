@@ -11,6 +11,7 @@ NODE_OCPUS="${NODE_OCPUS:-1}"
 NODE_MEMORY_GB="${NODE_MEMORY_GB:-6}"
 NODE_COUNT="${NODE_COUNT:-1}"
 NODE_IMAGE_NAME="${NODE_IMAGE_NAME:-}"
+NODE_IMAGE_ID="${NODE_IMAGE_ID:-}"
 VCN_CIDR="${VCN_CIDR:-10.90.0.0/16}"
 LB_SUBNET_CIDR="${LB_SUBNET_CIDR:-10.90.1.0/24}"
 NODE_SUBNET_CIDR="${NODE_SUBNET_CIDR:-10.90.2.0/24}"
@@ -191,15 +192,28 @@ if [[ -z "$CLUSTER_ID" || "$CLUSTER_ID" == "null" ]]; then
   exit 1
 fi
 
-if [[ -z "$NODE_IMAGE_NAME" ]]; then
+if [[ -z "$NODE_IMAGE_ID" ]]; then
   step "Finding OKE-supported node image"
+  NODE_IMAGE_ID="$(oci ce node-pool-options get \
+    --node-pool-option-id "$CLUSTER_ID" \
+    --query 'data.sources[-1]."image-id"' \
+    --raw-output)"
+
   NODE_IMAGE_NAME="$(oci ce node-pool-options get \
     --node-pool-option-id "$CLUSTER_ID" \
     --query 'data.sources[-1]."source-name"' \
-    --raw-output)"
+    --raw-output 2>/dev/null || true)"
 fi
 
-ask NODE_IMAGE_NAME "OKE node image name" "$NODE_IMAGE_NAME"
+if [[ "$NODE_IMAGE_ID" == "null" ]]; then
+  NODE_IMAGE_ID=""
+fi
+
+if [[ -n "$NODE_IMAGE_NAME" && "$NODE_IMAGE_NAME" != "null" ]]; then
+  step "Selected OKE node image: ${NODE_IMAGE_NAME}"
+fi
+
+ask NODE_IMAGE_ID "OKE node image OCID" "$NODE_IMAGE_ID"
 
 step "Finding or creating node pool"
 NODE_POOL_ID="$(first_id "data[?name=='${NODE_POOL_NAME}' && \"lifecycle-state\"!='DELETED'] | [0].id" ce node-pool list --compartment-id "$COMPARTMENT_OCID" --cluster-id "$CLUSTER_ID")"
@@ -211,7 +225,7 @@ if [[ -z "$NODE_POOL_ID" || "$NODE_POOL_ID" == "null" ]]; then
     --kubernetes-version "$K8S_VERSION" \
     --node-shape "$NODE_SHAPE" \
     --node-shape-config "{\"ocpus\":${NODE_OCPUS},\"memoryInGBs\":${NODE_MEMORY_GB}}" \
-    --node-image-name "$NODE_IMAGE_NAME" \
+    --node-source-details "{\"sourceType\":\"IMAGE\",\"imageId\":\"${NODE_IMAGE_ID}\"}" \
     --placement-configs "[{\"availabilityDomain\":\"${AD1}\",\"subnetId\":\"${NODE_SUBNET_ID}\"}]" \
     --size "$NODE_COUNT" \
     --wait-for-state SUCCEEDED >/dev/null
