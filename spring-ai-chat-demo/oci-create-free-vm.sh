@@ -16,9 +16,10 @@ OCPUS="${OCPUS:-1}"
 MEMORY_GB="${MEMORY_GB:-6}"
 BOOT_VOLUME_GB="${BOOT_VOLUME_GB:-}"
 APP_PORT="${APP_PORT:-8080}"
+FAULT_DOMAIN="${FAULT_DOMAIN:-}"
 
 step() {
-  printf '[oci-vm] %s\n' "$1"
+  printf '[oci-vm] %s\n' "$1" >&2
 }
 
 need() {
@@ -177,19 +178,65 @@ SOURCE_DETAILS="{\"sourceType\":\"image\",\"imageId\":\"${IMAGE_ID}\"}"
 if [[ -n "$BOOT_VOLUME_GB" ]]; then
   SOURCE_DETAILS="{\"sourceType\":\"image\",\"imageId\":\"${IMAGE_ID}\",\"bootVolumeSizeInGBs\":${BOOT_VOLUME_GB}}"
 fi
-INSTANCE_ID="$(oci compute instance launch \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --availability-domain "$AD_NAME" \
-  --display-name "$VM_NAME" \
-  --shape "$SHAPE" \
-  --shape-config "{\"ocpus\":${OCPUS},\"memoryInGBs\":${MEMORY_GB}}" \
-  --source-details "$SOURCE_DETAILS" \
-  --subnet-id "$SUBNET_ID" \
-  --assign-public-ip true \
-  --metadata "{\"ssh_authorized_keys\":\"${PUBLIC_KEY}\"}" \
-  --wait-for-state RUNNING \
-  --query 'data.id' \
-  --raw-output)"
+
+launch_instance() {
+  local fault_domain="$1"
+  local args=(
+    compute instance launch
+    --compartment-id "$COMPARTMENT_OCID"
+    --availability-domain "$AD_NAME"
+    --display-name "$VM_NAME"
+    --shape "$SHAPE"
+    --shape-config "{\"ocpus\":${OCPUS},\"memoryInGBs\":${MEMORY_GB}}"
+    --source-details "$SOURCE_DETAILS"
+    --subnet-id "$SUBNET_ID"
+    --assign-public-ip true
+    --metadata "{\"ssh_authorized_keys\":\"${PUBLIC_KEY}\"}"
+    --wait-for-state RUNNING
+    --query 'data.id'
+    --raw-output
+  )
+
+  if [[ -n "$fault_domain" ]]; then
+    args+=(--fault-domain "$fault_domain")
+    step "Trying ${fault_domain}"
+  else
+    step "Trying without explicit fault domain"
+  fi
+
+  oci "${args[@]}"
+}
+
+INSTANCE_ID=""
+if [[ -n "$FAULT_DOMAIN" ]]; then
+  if ! INSTANCE_ID="$(launch_instance "$FAULT_DOMAIN")"; then
+    INSTANCE_ID=""
+  fi
+else
+  mapfile -t FAULT_DOMAINS < <(oci iam fault-domain list \
+    --availability-domain "$AD_NAME" \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --query 'join(`\n`, data[].name)' \
+    --raw-output 2>/dev/null || true)
+
+  if [[ "${#FAULT_DOMAINS[@]}" -eq 0 ]]; then
+    INSTANCE_ID="$(launch_instance "")"
+  else
+    for candidate_fault_domain in "${FAULT_DOMAINS[@]}"; do
+      if INSTANCE_ID="$(launch_instance "$candidate_fault_domain")"; then
+        break
+      fi
+      step "No capacity in ${candidate_fault_domain}; trying next fault domain"
+      INSTANCE_ID=""
+    done
+  fi
+fi
+
+if [[ -z "$INSTANCE_ID" ]]; then
+  printf "Could not create the VM. OCI reported no host capacity for %s in %s.\n" "$SHAPE" "$AD_NAME" >&2
+  printf "Try again later, lower MEMORY_GB/OCPUS, or use another region if your tenancy allows it.\n" >&2
+  exit 1
+fi
 
 step "Finding VM public IP"
 VNIC_ID="$(oci compute instance list-vnics \
