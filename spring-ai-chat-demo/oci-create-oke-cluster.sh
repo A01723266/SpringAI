@@ -33,15 +33,11 @@ ask() {
   local value
 
   if [[ -n "$current_value" ]]; then
-    return
+    default_value="$current_value"
   fi
 
-  if [[ -n "$default_value" ]]; then
-    read -r -p "${prompt} [${default_value}]: " value
-    value="${value:-$default_value}"
-  else
-    read -r -p "${prompt}: " value
-  fi
+  read -r -p "${prompt} [${default_value}]: " value
+  value="${value:-$default_value}"
 
   if [[ -z "$value" ]]; then
     printf "%s is required.\n" "$var_name" >&2
@@ -54,11 +50,23 @@ ask() {
 need oci
 need kubectl
 
+detect_region() {
+  local region
+  region="${OCI_CLI_REGION:-${OCI_REGION:-}}"
+  if [[ -z "$region" && -f "$HOME/.oci/config" ]]; then
+    region="$(awk -F= '/^[[:space:]]*region[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$HOME/.oci/config" 2>/dev/null || true)"
+  fi
+  if [[ -z "$region" ]]; then
+    region="$(oci iam region-subscription list --query 'data[0]."region-name"' --raw-output 2>/dev/null || true)"
+  fi
+  printf '%s' "$region"
+}
+
 TENANCY_OCID="${TENANCY_OCID:-}"
 if [[ -z "$TENANCY_OCID" ]]; then
   TENANCY_OCID="$(oci iam region-subscription list --query 'data[0]."tenancy-id"' --raw-output 2>/dev/null || true)"
 fi
-REGION_DEFAULT="${OCI_CLI_REGION:-${OCI_REGION:-mx-queretaro-1}}"
+REGION_DEFAULT="$(detect_region)"
 
 ask COMPARTMENT_OCID "Compartment OCID for OKE. Press Enter to use tenancy/root" "$TENANCY_OCID"
 ask OCI_REGION "OCI region" "$REGION_DEFAULT"

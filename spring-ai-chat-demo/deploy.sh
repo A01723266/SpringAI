@@ -5,8 +5,8 @@ APP_IMAGE="${APP_IMAGE:-spring-ai-chat-demo:local}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2:1b}"
 CREATE_OCIR_SECRET="${CREATE_OCIR_SECRET:-true}"
 OCIR_SECRET_NAME="${OCIR_SECRET_NAME:-ocirsecret}"
-OCIR_REGISTRY="${OCIR_REGISTRY:-${OCIR_SERVER:-mx-queretaro-1.ocir.io}}"
-OCIR_USERNAME="${OCIR_USERNAME:-axthosg61i3c/qazwsx.qazwsx244000@gmail.com}"
+OCIR_REGISTRY="${OCIR_REGISTRY:-${OCIR_SERVER:-}}"
+OCIR_USERNAME="${OCIR_USERNAME:-}"
 
 step() {
   printf '[deploy] %s\n' "$1"
@@ -33,6 +33,11 @@ ask_secret() {
 }
 
 if [[ "$CREATE_OCIR_SECRET" == "true" && "$APP_IMAGE" == "${OCIR_REGISTRY}"/* ]]; then
+  if [[ -z "$OCIR_USERNAME" ]]; then
+    printf "OCIR_USERNAME is required to create the Kubernetes image pull secret. Run 'source .cloudshell.env' first.\n" >&2
+    exit 1
+  fi
+
   ask_secret OCIR_AUTH_TOKEN "OCI auth token for Kubernetes image pull secret"
   step "Creating/updating Kubernetes image pull secret ${OCIR_SECRET_NAME}"
   kubectl create secret docker-registry "$OCIR_SECRET_NAME" \

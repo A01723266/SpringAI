@@ -1,6 +1,13 @@
-# Deploy desde OCI Cloud Shell en Free Tier
+# Deploy desde OCI Cloud Shell
 
-Este flujo evita OCIR y OKE. Es el mejor camino para tu cuenta Free Tier porque OCIR ya regreso `FREE_TIER_NOT_SUPPORTED` al intentar crear el repositorio.
+Este proyecto soporta dos rutas:
+
+- VM directa: simple y rapida para pruebas.
+- OCIR + OKE: mas parecido al proyecto `OCIcons`, recomendado si tu cuenta nueva tiene creditos y OCIR/OKE habilitados.
+
+Los scripts detectan valores desde OCI Cloud Shell y luego te preguntan para validarlos. Si el valor entre `[]` se ve bien, presiona Enter.
+
+## Ruta A: VM directa
 
 La VM funciona como runner y servidor:
 
@@ -39,11 +46,7 @@ cd SpringAI/spring-ai-chat-demo
 bash oci-create-free-vm.sh
 ```
 
-Cuando pregunte el compartment, puedes usar tu compartment:
-
-```text
-ocid1.compartment.oc1..aaaaaaaahbmxbgpj5efimqcjv45p2ylwmcolt6s7bjrdjkepngrygiavupea
-```
+Cuando pregunte el compartment, revisa el valor detectado. Si quieres usar el tenancy/root, presiona Enter.
 
 El script crea:
 
@@ -121,8 +124,32 @@ podman rm -f ollama
 
 El volumen `ollama` no se borra automaticamente.
 
-## OCIR y OKE
+## Ruta B: OCIR + OKE
 
-Los scripts `cloudshell-prepare.sh`, `build.sh`, `deploy.sh` y `k8s/` quedan disponibles por si mas adelante usas una cuenta/compartment donde OCIR y OKE esten habilitados.
+Esta ruta es la equivalente conceptual a `OCIcons`: se construye imagen, se empuja a OCIR y Kubernetes la consume.
 
-En tu Free Tier actual no conviene usarlos como ruta principal porque OCIR rechazo la creacion del repositorio con `FREE_TIER_NOT_SUPPORTED`.
+```bash
+bash cloudshell-prepare.sh
+source .cloudshell.env
+bash build.sh
+```
+
+Luego crea OKE si no tienes cluster:
+
+```bash
+bash oci-create-oke-cluster.sh
+source .oci-oke.env
+```
+
+Despliega:
+
+```bash
+export APP_IMAGE="$OCIR_REPOSITORY:$IMAGE_TAG"
+bash deploy.sh
+```
+
+Prueba con port-forward:
+
+```bash
+kubectl port-forward service/spring-ai-chat-demo-service 8080:8080
+```

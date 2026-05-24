@@ -10,8 +10,8 @@ SSH_KEY="${SSH_KEY:-}"
 APP_PORT="${APP_PORT:-8080}"
 OLLAMA_VOLUME="${OLLAMA_VOLUME:-ollama}"
 NETWORK_NAME="${NETWORK_NAME:-spring-ai-demo-net}"
-OCIR_REGISTRY="${OCIR_REGISTRY:-${OCIR_SERVER:-mx-queretaro-1.ocir.io}}"
-OCIR_USERNAME="${OCIR_USERNAME:-axthosg61i3c/qazwsx.qazwsx244000@gmail.com}"
+OCIR_REGISTRY="${OCIR_REGISTRY:-${OCIR_SERVER:-}}"
+OCIR_USERNAME="${OCIR_USERNAME:-}"
 
 step() {
   printf '[vm-deploy] %s\n' "$1"
@@ -32,15 +32,11 @@ ask() {
   local value
 
   if [[ -n "$current_value" ]]; then
-    return
+    default_value="$current_value"
   fi
 
-  if [[ -n "$default_value" ]]; then
-    read -r -p "${prompt} [${default_value}]: " value
-    value="${value:-$default_value}"
-  else
-    read -r -p "${prompt}: " value
-  fi
+  read -r -p "${prompt} [${default_value}]: " value
+  value="${value:-$default_value}"
 
   if [[ -z "$value" ]]; then
     printf "%s is required.\n" "$var_name" >&2
@@ -81,7 +77,7 @@ fi
 ask VM_HOST "Public IP or DNS of the Always Free compute VM"
 ask VM_USER "SSH user" "$VM_USER"
 ask OCIR_REGISTRY "OCIR registry" "$OCIR_REGISTRY"
-ask OCIR_USERNAME "OCIR username"
+ask OCIR_USERNAME "OCIR username" "$OCIR_USERNAME"
 ask_secret OCIR_AUTH_TOKEN "OCI auth token for remote OCIR login"
 
 SSH_ARGS=()

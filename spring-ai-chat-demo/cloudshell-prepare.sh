@@ -3,10 +3,11 @@ set -euo pipefail
 
 ENV_FILE="${ENV_FILE:-.cloudshell.env}"
 
-DEFAULT_OCI_REGION="${DEFAULT_OCI_REGION:-mx-queretaro-1}"
-DEFAULT_OCIR_REGISTRY="${DEFAULT_OCIR_REGISTRY:-mx-queretaro-1.ocir.io}"
-DEFAULT_OCIR_USERNAME="${DEFAULT_OCIR_USERNAME:-axthosg61i3c/qazwsx.qazwsx244000@gmail.com}"
-DEFAULT_OCIR_NAMESPACE="${DEFAULT_OCIR_NAMESPACE:-axthosg61i3c}"
+DEFAULT_OCI_REGION="${DEFAULT_OCI_REGION:-}"
+DEFAULT_COMPARTMENT_OCID="${DEFAULT_COMPARTMENT_OCID:-}"
+DEFAULT_OCIR_REGISTRY="${DEFAULT_OCIR_REGISTRY:-}"
+DEFAULT_OCIR_USERNAME="${DEFAULT_OCIR_USERNAME:-}"
+DEFAULT_OCIR_NAMESPACE="${DEFAULT_OCIR_NAMESPACE:-}"
 DEFAULT_OCIR_REPO_PATH="${DEFAULT_OCIR_REPO_PATH:-spring-ai-chat-demo}"
 DEFAULT_IMAGE_TAG="${DEFAULT_IMAGE_TAG:-v1}"
 
@@ -25,15 +26,13 @@ ask() {
   local var_name="$1"
   local prompt="$2"
   local default_value="${3:-}"
+  local current_value="${!var_name:-}"
   local value
 
-  if [[ -n "${!var_name:-}" && "${!var_name}" != *"<"* && "${!var_name}" != *">"* ]]; then
-    return
-  fi
-
-  if [[ -n "${!var_name:-}" && ( "${!var_name}" == *"<"* || "${!var_name}" == *">"* ) ]]; then
-    step "Ignoring placeholder value for ${var_name}: ${!var_name}"
-    unset "$var_name"
+  if [[ -n "$current_value" && "$current_value" != *"<"* && "$current_value" != *">"* ]]; then
+    default_value="$current_value"
+  elif [[ -n "$current_value" ]]; then
+    step "Ignoring placeholder value for ${var_name}: ${current_value}"
   fi
 
   read -r -p "${prompt} [${default_value}]: " value
@@ -82,15 +81,60 @@ need oci
 
 CONTAINER_CLI="$(detect_container_cli)"
 
-if [[ -z "${OCIR_NAMESPACE:-}" ]]; then
-  DETECTED_NAMESPACE="$(oci os ns get --query data --raw-output 2>/dev/null || true)"
-  DEFAULT_OCIR_NAMESPACE="${DETECTED_NAMESPACE:-$DEFAULT_OCIR_NAMESPACE}"
+detect_region() {
+  local region
+  region="${OCI_CLI_REGION:-${OCI_REGION:-}}"
+  if [[ -z "$region" && -f "$HOME/.oci/config" ]]; then
+    region="$(awk -F= '/^[[:space:]]*region[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$HOME/.oci/config" 2>/dev/null || true)"
+  fi
+  if [[ -z "$region" ]]; then
+    region="$(oci iam region-subscription list --query 'data[0]."region-name"' --raw-output 2>/dev/null || true)"
+  fi
+  printf '%s' "$region"
+}
+
+detect_tenancy_ocid() {
+  local tenancy
+  tenancy="$(oci iam region-subscription list --query 'data[0]."tenancy-id"' --raw-output 2>/dev/null || true)"
+  if [[ -z "$tenancy" || "$tenancy" == "null" ]]; then
+    tenancy="$(awk -F= '/^[[:space:]]*tenancy[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$HOME/.oci/config" 2>/dev/null || true)"
+  fi
+  printf '%s' "$tenancy"
+}
+
+detect_namespace() {
+  oci os ns get --query data --raw-output 2>/dev/null || true
+}
+
+detect_user_name() {
+  local user_ocid user_name
+  user_ocid="$(awk -F= '/^[[:space:]]*user[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$HOME/.oci/config" 2>/dev/null || true)"
+  if [[ -n "$user_ocid" ]]; then
+    user_name="$(oci iam user get --user-id "$user_ocid" --query 'data.name' --raw-output 2>/dev/null || true)"
+  fi
+  if [[ -z "$user_name" || "$user_name" == "null" ]]; then
+    user_name="${OCI_USERNAME:-${USER:-}}"
+  fi
+  printf '%s' "$user_name"
+}
+
+DEFAULT_OCI_REGION="${DEFAULT_OCI_REGION:-$(detect_region)}"
+DEFAULT_COMPARTMENT_OCID="${DEFAULT_COMPARTMENT_OCID:-$(detect_tenancy_ocid)}"
+DEFAULT_OCIR_NAMESPACE="${DEFAULT_OCIR_NAMESPACE:-$(detect_namespace)}"
+DEFAULT_OCIR_REGISTRY="${DEFAULT_OCIR_REGISTRY:-${DEFAULT_OCI_REGION}.ocir.io}"
+
+DETECTED_USER_NAME="$(detect_user_name)"
+if [[ -n "$DEFAULT_OCIR_NAMESPACE" && -n "$DETECTED_USER_NAME" ]]; then
+  DEFAULT_OCIR_USERNAME="${DEFAULT_OCIR_USERNAME:-${DEFAULT_OCIR_NAMESPACE}/${DETECTED_USER_NAME}}"
+else
+  DEFAULT_OCIR_USERNAME="${DEFAULT_OCIR_USERNAME:-${DETECTED_USER_NAME}}"
 fi
 
-step "Preparing OCIR login with the registry format that was verified to work."
+step "Preparing OCIR login with detected values. Press Enter to accept a value in brackets."
 step "Using container CLI: ${CONTAINER_CLI}"
 
 ask OCI_REGION "OCI region" "$DEFAULT_OCI_REGION"
+ask COMPARTMENT_OCID "Compartment OCID for OCIR repository. Press Enter to use tenancy/root" "$DEFAULT_COMPARTMENT_OCID"
 ask OCIR_REGISTRY "OCIR registry" "$DEFAULT_OCIR_REGISTRY"
 ask OCIR_USERNAME "OCIR login username" "$DEFAULT_OCIR_USERNAME"
 ask OCIR_NAMESPACE "OCIR tenancy namespace for image path" "$DEFAULT_OCIR_NAMESPACE"
@@ -100,10 +144,27 @@ ask_secret OCIR_AUTH_TOKEN "OCI auth token for OCIR login"
 
 OCIR_REPOSITORY="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${OCIR_REPO_PATH}"
 
+step "Creating OCIR repository if it does not exist"
+EXISTING_REPOSITORY_ID="$(oci artifacts container repository list \
+  --compartment-id "$COMPARTMENT_OCID" \
+  --display-name "$OCIR_REPO_PATH" \
+  --query 'data.items[0].id' \
+  --raw-output 2>/dev/null || true)"
+
+if [[ -z "$EXISTING_REPOSITORY_ID" || "$EXISTING_REPOSITORY_ID" == "null" ]]; then
+  oci artifacts container repository create \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --display-name "$OCIR_REPO_PATH" \
+    --is-public false >/dev/null
+else
+  step "OCIR repository already exists: ${OCIR_REPO_PATH}"
+fi
+
 step "Logging in to ${OCIR_REGISTRY} as ${OCIR_USERNAME}"
 printf '%s' "$OCIR_AUTH_TOKEN" | "${CONTAINER_CLI}" login "$OCIR_REGISTRY" --username "$OCIR_USERNAME" --password-stdin
 
 cat > "$ENV_FILE" <<EOF
+export COMPARTMENT_OCID='${COMPARTMENT_OCID}'
 export OCI_REGION='${OCI_REGION}'
 export OCI_CLI_REGION='${OCI_REGION}'
 export OCIR_REGISTRY='${OCIR_REGISTRY}'
