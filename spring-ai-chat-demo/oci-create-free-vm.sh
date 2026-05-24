@@ -84,7 +84,7 @@ export OCI_CLI_REGION="$OCI_REGION"
 if [[ ! -f "$SSH_KEY_PATH" ]]; then
   step "Creating SSH key at ${SSH_KEY_PATH}"
   mkdir -p "$(dirname "$SSH_KEY_PATH")"
-  ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -N "" -C "spring-ai-chat-demo"
+  ssh-keygen -t rsa -b 4096 -f "$SSH_KEY_PATH" -N "" -C "spring-ai-chat-demo"
 else
   step "Using existing SSH key ${SSH_KEY_PATH}"
 fi

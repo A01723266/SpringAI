@@ -69,7 +69,7 @@ bash oci-create-free-vm.sh
 
 The script asks for your compartment OCID and region, then creates:
 
-- SSH key under `~/.ssh/spring-ai-chat-demo`
+- RSA SSH key under `~/.ssh/spring-ai-chat-demo`
 - VCN, public subnet, internet gateway, route table, and security list
 - inbound rules for SSH `22` and app port `8080`
 - Always Free eligible Compute VM using `VM.Standard.A1.Flex`
