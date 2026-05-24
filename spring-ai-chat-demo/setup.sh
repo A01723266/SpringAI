@@ -14,10 +14,23 @@ need() {
   fi
 }
 
+container_cli() {
+  if command -v podman >/dev/null 2>&1; then
+    printf 'podman'
+  elif command -v docker >/dev/null 2>&1; then
+    printf 'docker'
+  else
+    printf "Neither podman nor docker was found. OCI Cloud Shell normally includes podman.\n" >&2
+    exit 1
+  fi
+}
+
 step "Checking required tools"
-need docker
 need kubectl
 need curl
+
+CONTAINER_CLI="$(container_cli)"
+step "Using container CLI: ${CONTAINER_CLI}"
 
 if command -v oci >/dev/null 2>&1; then
   step "OCI CLI found"
@@ -25,8 +38,8 @@ else
   step "OCI CLI not found; this is OK unless you plan to push to OCIR or manage OKE from this machine"
 fi
 
-step "Checking Docker"
-docker version >/dev/null
+step "Checking container CLI"
+"${CONTAINER_CLI}" version >/dev/null
 
 step "Checking Kubernetes context"
 kubectl config current-context

@@ -6,13 +6,30 @@ IMAGE_TAG="${IMAGE_TAG:-local}"
 LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
 OCIR_REPOSITORY="${OCIR_REPOSITORY:-}"
 PUSH_IMAGE="${PUSH_IMAGE:-false}"
+CONTAINER_CLI="${CONTAINER_CLI:-}"
 
 step() {
   printf '[build] %s\n' "$1"
 }
 
+detect_container_cli() {
+  if [[ -n "${CONTAINER_CLI}" ]]; then
+    printf '%s' "${CONTAINER_CLI}"
+  elif command -v podman >/dev/null 2>&1; then
+    printf 'podman'
+  elif command -v docker >/dev/null 2>&1; then
+    printf 'docker'
+  else
+    printf "Neither podman nor docker was found. OCI Cloud Shell normally includes podman.\n" >&2
+    exit 1
+  fi
+}
+
+CLI="$(detect_container_cli)"
+
+step "Using container CLI: ${CLI}"
 step "Building ${LOCAL_IMAGE}"
-docker build -t "${LOCAL_IMAGE}" .
+"${CLI}" build -t "${LOCAL_IMAGE}" .
 
 if [[ "${PUSH_IMAGE}" == "true" ]]; then
   if [[ -z "${OCIR_REPOSITORY}" ]]; then
@@ -22,10 +39,10 @@ if [[ "${PUSH_IMAGE}" == "true" ]]; then
 
   REMOTE_IMAGE="${OCIR_REPOSITORY}:${IMAGE_TAG}"
   step "Tagging ${REMOTE_IMAGE}"
-  docker tag "${LOCAL_IMAGE}" "${REMOTE_IMAGE}"
+  "${CLI}" tag "${LOCAL_IMAGE}" "${REMOTE_IMAGE}"
 
   step "Pushing ${REMOTE_IMAGE}"
-  docker push "${REMOTE_IMAGE}"
+  "${CLI}" push "${REMOTE_IMAGE}"
 
   step "Use APP_IMAGE=${REMOTE_IMAGE} when running deploy.sh"
 else

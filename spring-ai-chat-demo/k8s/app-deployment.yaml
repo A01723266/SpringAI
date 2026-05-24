@@ -17,6 +17,8 @@ spec:
         app.kubernetes.io/name: spring-ai-chat-demo
         app.kubernetes.io/component: app
     spec:
+      imagePullSecrets:
+        - name: ocirsecret
       containers:
         - name: app
           image: spring-ai-chat-demo:local
