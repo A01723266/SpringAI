@@ -6,10 +6,10 @@ COPY pom.xml .
 COPY .mvn .mvn
 COPY mvnw .
 COPY mvnw.cmd .
-RUN chmod +x mvnw && ./mvnw -B -DskipTests dependency:go-offline
+RUN mvn -B -DskipTests dependency:go-offline
 
 COPY src src
-RUN ./mvnw -B clean package
+RUN mvn -B clean package
 
 FROM eclipse-temurin:21-jre-alpine
 
