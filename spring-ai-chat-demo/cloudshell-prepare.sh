@@ -107,6 +107,11 @@ region_key_for() {
   esac
 }
 
+default_ocir_server() {
+  local region="$1"
+  printf 'ocir.%s.oci.oraclecloud.com' "$region"
+}
+
 discover_tenancy_ocid() {
   if [[ -n "${OCI_TENANCY:-}" ]]; then
     printf '%s' "$OCI_TENANCY"
@@ -162,6 +167,15 @@ create_auth_token() {
   printf '%s' "$token"
 }
 
+ocir_login() {
+  local cli="$1"
+  local server="$2"
+  local username="$3"
+  local token="$4"
+
+  printf '%s' "$token" | "$cli" login "$server" --username "$username" --password-stdin
+}
+
 need oci
 
 CONTAINER_CLI="$(detect_container_cli)"
@@ -196,7 +210,7 @@ ask_required OCIR_NAMESPACE "Tenancy namespace" "$TENANCY_NAMESPACE"
 ask_required OCIR_REPO_PATH "OCIR repository path" "spring-ai-chat-demo"
 ask_required USER_OCID "OCI user OCID for creating an auth token" "$USER_OCID"
 
-OCIR_SERVER="${OCIR_SERVER:-${OCIR_REGION_KEY}.ocir.io}"
+OCIR_SERVER="${OCIR_SERVER:-$(default_ocir_server "$OCI_REGION")}"
 OCIR_REPOSITORY="${OCIR_SERVER}/${OCIR_NAMESPACE}/${OCIR_REPO_PATH}"
 
 DEFAULT_OCIR_USERNAME="${OCIR_NAMESPACE}"
@@ -230,7 +244,31 @@ if [[ -z "${OCIR_AUTH_TOKEN:-}" ]]; then
 fi
 
 step "Logging in to ${OCIR_SERVER}"
-printf '%s' "$OCIR_AUTH_TOKEN" | "${CONTAINER_CLI}" login "$OCIR_SERVER" --username "$OCIR_USERNAME" --password-stdin
+if ! ocir_login "$CONTAINER_CLI" "$OCIR_SERVER" "$OCIR_USERNAME" "$OCIR_AUTH_TOKEN"; then
+  warn "Login failed with ${OCIR_SERVER}."
+  LEGACY_OCIR_SERVER="${OCIR_REGION_KEY}.ocir.io"
+  if [[ "$LEGACY_OCIR_SERVER" != "$OCIR_SERVER" ]]; then
+    warn "Trying legacy OCIR endpoint ${LEGACY_OCIR_SERVER}."
+    if ocir_login "$CONTAINER_CLI" "$LEGACY_OCIR_SERVER" "$OCIR_USERNAME" "$OCIR_AUTH_TOKEN"; then
+      OCIR_SERVER="$LEGACY_OCIR_SERVER"
+      OCIR_REPOSITORY="${OCIR_SERVER}/${OCIR_NAMESPACE}/${OCIR_REPO_PATH}"
+    else
+      warn "Legacy login also failed."
+      unset OCIR_AUTH_TOKEN
+    fi
+  else
+    unset OCIR_AUTH_TOKEN
+  fi
+fi
+
+if [[ -z "${OCIR_AUTH_TOKEN:-}" ]]; then
+  warn "Most OCIR login failures are caused by OCIR_USERNAME format or an invalid auth token."
+  warn "Username examples: <namespace>/<username> or <namespace>/<identity-domain>/<email>."
+  ask_required OCIR_USERNAME "Re-enter OCIR username"
+  ask_secret_optional OCIR_AUTH_TOKEN "Paste OCI auth token"
+  step "Retrying login to ${OCIR_SERVER}"
+  ocir_login "$CONTAINER_CLI" "$OCIR_SERVER" "$OCIR_USERNAME" "$OCIR_AUTH_TOKEN"
+fi
 
 cat > "$ENV_FILE" <<EOF
 export OCI_REGION='${OCI_REGION}'

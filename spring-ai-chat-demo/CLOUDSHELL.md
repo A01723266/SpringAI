@@ -28,12 +28,30 @@ The script discovers what it can and uses detected defaults automatically. If so
 
 - OCI region, for example `mx-queretaro-1`
 - compartment OCID, optional and usually auto-filled with tenancy/root
-- OCIR region key, for example `qro`
+- OCIR region key, for example `qro`, used only as a fallback
 - tenancy namespace
 - OCIR repository path
 - OCIR username
 - OCI user OCID, used to create an auth token
 - OCI auth token, generated automatically when your permissions allow it
+
+For OCIR, the script uses Oracle's recommended endpoint format by default:
+
+```text
+ocir.<region-identifier>.oci.oraclecloud.com
+```
+
+For Queretaro that is:
+
+```text
+ocir.mx-queretaro-1.oci.oraclecloud.com
+```
+
+If login fails, the script also tries the legacy OC1 endpoint:
+
+```text
+qro.ocir.io
+```
 
 To force the script to ask before accepting detected defaults:
 
