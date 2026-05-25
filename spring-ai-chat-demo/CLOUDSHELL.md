@@ -7,15 +7,24 @@ Este proyecto soporta dos rutas:
 
 Los scripts detectan valores desde OCI Cloud Shell y luego te preguntan para validarlos. Si el valor entre `[]` se ve bien, presiona Enter.
 
-## Ruta A: VM directa
+## Ruta A: VM directa recomendada
 
 La VM funciona como runner y servidor:
 
-- Cloud Shell crea o prepara una VM Always Free.
+- Cloud Shell crea o prepara una VM x86 con creditos de prueba.
 - La VM clona el repo desde GitHub.
 - La VM compila la imagen localmente con Podman.
 - La VM corre dos contenedores: `ollama` y `spring-ai-chat-demo`.
 - No se suben imagenes a OCIR.
+
+Defaults recomendados para una cuenta Free Trial de 30 dias con creditos:
+
+- Shape: `VM.Standard.E4.Flex`
+- OCPU: `2`
+- RAM: `16 GB`
+- Boot volume: `100 GB`
+
+El script prueba tambien `VM.Standard.E5.Flex` y `VM.Standard.E3.Flex` si el primer shape no tiene capacidad. Evitamos `A1.Flex` por default para no mezclar ARM con imagenes x86.
 
 ## Lo que hace OCIcons
 
@@ -40,7 +49,7 @@ git clone https://github.com/A01723266/SpringAI.git
 cd SpringAI/spring-ai-chat-demo
 ```
 
-## 2. Crear la VM Always Free
+## 2. Crear la VM
 
 ```bash
 bash oci-create-free-vm.sh
@@ -53,14 +62,14 @@ El script crea:
 - Llave SSH RSA en `~/.ssh/spring-ai-chat-demo`
 - VCN, subnet publica, internet gateway, route table y security list
 - Reglas inbound para SSH `22` y app `8080`
-- VM `VM.Standard.A1.Flex`
+- VM x86 flexible para los creditos de prueba
 
 Al terminar escribe `.oci-vm.env`.
 
 Si falla por `bootVolumeQuota Service limit reached`, tu cuenta no tiene cuota libre de boot volume en esa region/tenancy. En ese caso revisa si hay boot volumes en otro compartment o region, o intenta con:
 
 ```bash
-export BOOT_VOLUME_GB=47
+export BOOT_VOLUME_GB=50
 bash oci-create-free-vm.sh
 ```
 

@@ -12,6 +12,7 @@ NODE_MEMORY_GB="${NODE_MEMORY_GB:-8}"
 NODE_COUNT="${NODE_COUNT:-1}"
 NODE_IMAGE_NAME="${NODE_IMAGE_NAME:-}"
 NODE_IMAGE_ID="${NODE_IMAGE_ID:-}"
+NODE_SHAPE_CANDIDATES="${NODE_SHAPE_CANDIDATES:-${NODE_SHAPE} VM.Standard.E5.Flex VM.Standard.E4.Flex VM.Standard.E3.Flex}"
 VCN_CIDR="${VCN_CIDR:-10.90.0.0/16}"
 LB_SUBNET_CIDR="${LB_SUBNET_CIDR:-10.90.1.0/24}"
 NODE_SUBNET_CIDR="${NODE_SUBNET_CIDR:-10.90.2.0/24}"
@@ -195,61 +196,97 @@ if [[ -z "$CLUSTER_ID" || "$CLUSTER_ID" == "null" ]]; then
   exit 1
 fi
 
-if [[ -z "$NODE_IMAGE_ID" ]]; then
-  step "Finding OKE-supported node image"
-  if [[ "$NODE_SHAPE" == *".A1."* || "$NODE_SHAPE" == *".A2."* ]]; then
-    NODE_IMAGE_ID="$(oci ce node-pool-options get \
-      --node-pool-option-id "$CLUSTER_ID" \
-      --query 'data.sources[?contains("source-name", `aarch64`)] | [-1]."image-id"' \
-      --raw-output)"
+get_node_image_for_shape() {
+  local shape="$1"
+  local arch_query
 
-    NODE_IMAGE_NAME="$(oci ce node-pool-options get \
-      --node-pool-option-id "$CLUSTER_ID" \
-      --query 'data.sources[?contains("source-name", `aarch64`)] | [-1]."source-name"' \
-      --raw-output 2>/dev/null || true)"
+  if [[ "$shape" == *".A1."* || "$shape" == *".A2."* ]]; then
+    arch_query='data.sources[?contains("source-name", `aarch64`)] | [-1]."image-id"'
   else
-    NODE_IMAGE_ID="$(oci ce node-pool-options get \
-      --node-pool-option-id "$CLUSTER_ID" \
-      --query 'data.sources[?!contains("source-name", `aarch64`)] | [-1]."image-id"' \
-      --raw-output)"
-
-    NODE_IMAGE_NAME="$(oci ce node-pool-options get \
-      --node-pool-option-id "$CLUSTER_ID" \
-      --query 'data.sources[?!contains("source-name", `aarch64`)] | [-1]."source-name"' \
-      --raw-output 2>/dev/null || true)"
+    arch_query='data.sources[?!contains("source-name", `aarch64`)] | [-1]."image-id"'
   fi
-fi
 
-if [[ "$NODE_IMAGE_ID" == "null" ]]; then
-  NODE_IMAGE_ID=""
-fi
+  oci ce node-pool-options get \
+    --node-pool-option-id "$CLUSTER_ID" \
+    --query "$arch_query" \
+    --raw-output 2>/dev/null || true
+}
 
-if [[ -n "$NODE_IMAGE_NAME" && "$NODE_IMAGE_NAME" != "null" ]]; then
-  step "Selected OKE node image: ${NODE_IMAGE_NAME}"
-fi
+delete_node_pool_if_present() {
+  local existing_id existing_state
 
-ask NODE_IMAGE_ID "OKE node image OCID" "$NODE_IMAGE_ID"
+  existing_id="$(first_id "data[?name=='${NODE_POOL_NAME}' && \"lifecycle-state\"!='DELETED'] | [0].id" ce node-pool list --compartment-id "$COMPARTMENT_OCID" --cluster-id "$CLUSTER_ID")"
+  if [[ -z "$existing_id" || "$existing_id" == "null" ]]; then
+    return
+  fi
 
-step "Finding or creating node pool"
-NODE_POOL_ID="$(first_id "data[?name=='${NODE_POOL_NAME}' && \"lifecycle-state\"!='DELETED'] | [0].id" ce node-pool list --compartment-id "$COMPARTMENT_OCID" --cluster-id "$CLUSTER_ID")"
-if [[ -z "$NODE_POOL_ID" || "$NODE_POOL_ID" == "null" ]]; then
+  existing_state="$(oci ce node-pool get --node-pool-id "$existing_id" --query 'data."lifecycle-state"' --raw-output 2>/dev/null || true)"
+  if [[ "$existing_state" == "ACTIVE" ]]; then
+    NODE_POOL_ID="$existing_id"
+    return
+  fi
+
+  step "Deleting stale node pool ${existing_id} in state ${existing_state}"
+  oci ce node-pool delete \
+    --node-pool-id "$existing_id" \
+    --force \
+    --wait-for-state SUCCEEDED >/dev/null || true
+}
+
+try_create_node_pool() {
+  local shape="$1"
+  local image_id
+
+  image_id="${NODE_IMAGE_ID:-$(get_node_image_for_shape "$shape")}"
+  if [[ -z "$image_id" || "$image_id" == "null" ]]; then
+    step "No OKE-supported image found for ${shape}"
+    return 1
+  fi
+
+  step "Trying node pool with shape ${shape}"
+  step "Using OKE node image ${image_id}"
+
   oci ce node-pool create \
     --compartment-id "$COMPARTMENT_OCID" \
     --cluster-id "$CLUSTER_ID" \
     --name "$NODE_POOL_NAME" \
     --kubernetes-version "$K8S_VERSION" \
-    --node-shape "$NODE_SHAPE" \
+    --node-shape "$shape" \
     --node-shape-config "{\"ocpus\":${NODE_OCPUS},\"memoryInGBs\":${NODE_MEMORY_GB}}" \
-    --node-source-details "{\"sourceType\":\"IMAGE\",\"imageId\":\"${NODE_IMAGE_ID}\"}" \
+    --node-source-details "{\"sourceType\":\"IMAGE\",\"imageId\":\"${image_id}\"}" \
     --placement-configs "[{\"availabilityDomain\":\"${AD1}\",\"subnetId\":\"${NODE_SUBNET_ID}\"}]" \
     --size "$NODE_COUNT" \
     --wait-for-state SUCCEEDED >/dev/null
 
   NODE_POOL_ID="$(first_id "data[?name=='${NODE_POOL_NAME}' && \"lifecycle-state\"!='DELETED'] | [0].id" ce node-pool list --compartment-id "$COMPARTMENT_OCID" --cluster-id "$CLUSTER_ID")"
+  NODE_SHAPE="$shape"
+  NODE_IMAGE_ID="$image_id"
+}
+
+step "Finding or creating node pool"
+NODE_POOL_ID=""
+delete_node_pool_if_present
+
+if [[ -z "$NODE_POOL_ID" || "$NODE_POOL_ID" == "null" ]]; then
+  SEEN_SHAPES=""
+  for candidate_shape in $NODE_SHAPE_CANDIDATES; do
+    if [[ " ${SEEN_SHAPES} " == *" ${candidate_shape} "* ]]; then
+      continue
+    fi
+    SEEN_SHAPES="${SEEN_SHAPES} ${candidate_shape}"
+
+    if try_create_node_pool "$candidate_shape"; then
+      break
+    fi
+
+    step "Node pool failed with ${candidate_shape}; trying next candidate"
+    delete_node_pool_if_present
+    NODE_POOL_ID=""
+  done
 fi
 
 if [[ -z "$NODE_POOL_ID" || "$NODE_POOL_ID" == "null" ]]; then
-  printf "Could not find or create OKE node pool %s.\n" "$NODE_POOL_NAME" >&2
+  printf "Could not find or create OKE node pool %s. OCI likely has no host capacity for the tried shapes: %s\n" "$NODE_POOL_NAME" "$NODE_SHAPE_CANDIDATES" >&2
   exit 1
 fi
 
@@ -266,6 +303,7 @@ export COMPARTMENT_OCID='${COMPARTMENT_OCID}'
 export OCI_REGION='${OCI_REGION}'
 export CLUSTER_OCID='${CLUSTER_ID}'
 export NODE_POOL_OCID='${NODE_POOL_ID}'
+export NODE_SHAPE='${NODE_SHAPE}'
 export VCN_ID='${VCN_ID}'
 export LB_SUBNET_ID='${LB_SUBNET_ID}'
 export NODE_SUBNET_ID='${NODE_SUBNET_ID}'

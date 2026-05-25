@@ -11,12 +11,13 @@ ROUTE_TABLE_NAME="${ROUTE_TABLE_NAME:-spring-ai-chat-demo-rt}"
 SECURITY_LIST_NAME="${SECURITY_LIST_NAME:-spring-ai-chat-demo-sl}"
 VCN_CIDR="${VCN_CIDR:-10.80.0.0/16}"
 SUBNET_CIDR="${SUBNET_CIDR:-10.80.1.0/24}"
-SHAPE="${SHAPE:-VM.Standard.A1.Flex}"
-OCPUS="${OCPUS:-1}"
-MEMORY_GB="${MEMORY_GB:-6}"
-BOOT_VOLUME_GB="${BOOT_VOLUME_GB:-}"
+SHAPE="${SHAPE:-VM.Standard.E4.Flex}"
+OCPUS="${OCPUS:-2}"
+MEMORY_GB="${MEMORY_GB:-16}"
+BOOT_VOLUME_GB="${BOOT_VOLUME_GB:-100}"
 APP_PORT="${APP_PORT:-8080}"
 FAULT_DOMAIN="${FAULT_DOMAIN:-}"
+SHAPE_CANDIDATES="${SHAPE_CANDIDATES:-${SHAPE} VM.Standard.E5.Flex VM.Standard.E4.Flex VM.Standard.E3.Flex}"
 
 step() {
   printf '[oci-vm] %s\n' "$1" >&2
@@ -84,6 +85,10 @@ REGION_DEFAULT="$(detect_region)"
 
 ask COMPARTMENT_OCID "Compartment OCID for the VM and network. Press Enter to use tenancy/root" "$TENANCY_OCID"
 ask OCI_REGION "OCI region" "$REGION_DEFAULT"
+ask SHAPE "VM shape" "$SHAPE"
+ask OCPUS "VM OCPUs" "$OCPUS"
+ask MEMORY_GB "VM memory GB" "$MEMORY_GB"
+ask BOOT_VOLUME_GB "VM boot volume GB" "$BOOT_VOLUME_GB"
 
 export OCI_CLI_REGION="$OCI_REGION"
 
@@ -171,32 +176,43 @@ if [[ -z "$SUBNET_ID" || "$SUBNET_ID" == "null" ]]; then
     --raw-output)"
 fi
 
-step "Finding latest Oracle Linux image for ${SHAPE}"
-IMAGE_ID="$(oci compute image list \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --operating-system "Oracle Linux" \
-  --shape "$SHAPE" \
-  --sort-by TIMECREATED \
-  --sort-order DESC \
-  --query 'data[0].id' \
-  --raw-output)"
+find_image_for_shape() {
+  local shape="$1"
 
-step "Creating Always Free eligible compute instance"
-SOURCE_DETAILS="{\"sourceType\":\"image\",\"imageId\":\"${IMAGE_ID}\"}"
-if [[ -n "$BOOT_VOLUME_GB" ]]; then
-  SOURCE_DETAILS="{\"sourceType\":\"image\",\"imageId\":\"${IMAGE_ID}\",\"bootVolumeSizeInGBs\":${BOOT_VOLUME_GB}}"
-fi
+  oci compute image list \
+    --compartment-id "$COMPARTMENT_OCID" \
+    --operating-system "Oracle Linux" \
+    --shape "$shape" \
+    --sort-by TIMECREATED \
+    --sort-order DESC \
+    --query 'data[0].id' \
+    --raw-output 2>/dev/null || true
+}
 
 launch_instance() {
-  local fault_domain="$1"
+  local shape="$1"
+  local fault_domain="$2"
+  local image_id source_details
+
+  image_id="$(find_image_for_shape "$shape")"
+  if [[ -z "$image_id" || "$image_id" == "null" ]]; then
+    step "No Oracle Linux image found for ${shape}"
+    return 1
+  fi
+
+  source_details="{\"sourceType\":\"image\",\"imageId\":\"${image_id}\"}"
+  if [[ -n "$BOOT_VOLUME_GB" ]]; then
+    source_details="{\"sourceType\":\"image\",\"imageId\":\"${image_id}\",\"bootVolumeSizeInGBs\":${BOOT_VOLUME_GB}}"
+  fi
+
   local args=(
     compute instance launch
     --compartment-id "$COMPARTMENT_OCID"
     --availability-domain "$AD_NAME"
     --display-name "$VM_NAME"
-    --shape "$SHAPE"
+    --shape "$shape"
     --shape-config "{\"ocpus\":${OCPUS},\"memoryInGBs\":${MEMORY_GB}}"
-    --source-details "$SOURCE_DETAILS"
+    --source-details "$source_details"
     --subnet-id "$SUBNET_ID"
     --assign-public-ip true
     --metadata "{\"ssh_authorized_keys\":\"${PUBLIC_KEY}\"}"
@@ -207,41 +223,67 @@ launch_instance() {
 
   if [[ -n "$fault_domain" ]]; then
     args+=(--fault-domain "$fault_domain")
-    step "Trying ${fault_domain}"
+    step "Trying ${shape} in ${fault_domain}"
   else
-    step "Trying without explicit fault domain"
+    step "Trying ${shape} without explicit fault domain"
   fi
 
   oci "${args[@]}"
 }
 
-INSTANCE_ID=""
-if [[ -n "$FAULT_DOMAIN" ]]; then
-  if ! INSTANCE_ID="$(launch_instance "$FAULT_DOMAIN")"; then
-    INSTANCE_ID=""
+step "Finding existing VM"
+INSTANCE_ID="$(first_id "data[?\"display-name\"=='${VM_NAME}' && \"lifecycle-state\"!='TERMINATED'] | [0].id" compute instance list --compartment-id "$COMPARTMENT_OCID")"
+if [[ -n "$INSTANCE_ID" && "$INSTANCE_ID" != "null" ]]; then
+  INSTANCE_STATE="$(oci compute instance get --instance-id "$INSTANCE_ID" --query 'data."lifecycle-state"' --raw-output 2>/dev/null || true)"
+  if [[ "$INSTANCE_STATE" == "RUNNING" ]]; then
+    step "Using existing running VM ${INSTANCE_ID}"
+  elif [[ "$INSTANCE_STATE" == "STOPPED" ]]; then
+    step "Starting existing VM ${INSTANCE_ID}"
+    oci compute instance action --instance-id "$INSTANCE_ID" --action START --wait-for-state RUNNING >/dev/null
+  else
+    step "Existing VM is ${INSTANCE_STATE}; delete it manually if it is stuck and rerun this script"
+    exit 1
   fi
 else
-  mapfile -t FAULT_DOMAINS < <(oci iam fault-domain list \
-    --availability-domain "$AD_NAME" \
-    --compartment-id "$COMPARTMENT_OCID" \
-    --query 'join(`\n`, data[].name)' \
-    --raw-output 2>/dev/null || true)
-
-  if [[ "${#FAULT_DOMAINS[@]}" -eq 0 ]]; then
-    INSTANCE_ID="$(launch_instance "")"
-  else
-    for candidate_fault_domain in "${FAULT_DOMAINS[@]}"; do
-      if INSTANCE_ID="$(launch_instance "$candidate_fault_domain")"; then
-        break
-      fi
-      step "No capacity in ${candidate_fault_domain}; trying next fault domain"
-      INSTANCE_ID=""
-    done
-  fi
+  INSTANCE_ID=""
 fi
 
 if [[ -z "$INSTANCE_ID" ]]; then
-  printf "Could not create the VM. OCI reported no host capacity for %s in %s.\n" "$SHAPE" "$AD_NAME" >&2
+  step "Creating compute instance"
+  mapfile -t FAULT_DOMAINS < <(oci iam fault-domain list \
+      --availability-domain "$AD_NAME" \
+      --compartment-id "$COMPARTMENT_OCID" \
+      --query 'join(`\n`, data[].name)' \
+      --raw-output 2>/dev/null || true)
+
+  if [[ -n "$FAULT_DOMAIN" ]]; then
+    FAULT_DOMAINS=("$FAULT_DOMAIN")
+  elif [[ "${#FAULT_DOMAINS[@]}" -eq 0 ]]; then
+    FAULT_DOMAINS=("")
+  else
+    FAULT_DOMAINS=("" "${FAULT_DOMAINS[@]}")
+  fi
+
+  SEEN_SHAPES=""
+  for candidate_shape in $SHAPE_CANDIDATES; do
+    if [[ " ${SEEN_SHAPES} " == *" ${candidate_shape} "* ]]; then
+      continue
+    fi
+    SEEN_SHAPES="${SEEN_SHAPES} ${candidate_shape}"
+
+    for candidate_fault_domain in "${FAULT_DOMAINS[@]}"; do
+      if INSTANCE_ID="$(launch_instance "$candidate_shape" "$candidate_fault_domain")"; then
+        SHAPE="$candidate_shape"
+        break 2
+      fi
+      step "No capacity or incompatible shape for ${candidate_shape} in ${candidate_fault_domain:-default placement}; trying next candidate"
+      INSTANCE_ID=""
+    done
+  done
+fi
+
+if [[ -z "$INSTANCE_ID" ]]; then
+  printf "Could not create the VM. OCI likely has no host capacity for the tried shapes: %s\n" "$SHAPE_CANDIDATES" >&2
   printf "Try again later, lower MEMORY_GB/OCPUS, or use another region if your tenancy allows it.\n" >&2
   exit 1
 fi
@@ -264,6 +306,7 @@ export VM_HOST='${VM_PUBLIC_IP}'
 export VM_USER='opc'
 export SSH_KEY='${SSH_KEY_PATH}'
 export APP_PORT='${APP_PORT}'
+export SHAPE='${SHAPE}'
 export INSTANCE_ID='${INSTANCE_ID}'
 export VCN_ID='${VCN_ID}'
 export SUBNET_ID='${SUBNET_ID}'

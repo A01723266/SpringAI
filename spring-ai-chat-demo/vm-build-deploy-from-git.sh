@@ -115,7 +115,11 @@ fi
 cd "${APP_DIR}"
 
 echo "[remote] Building app image ${APP_IMAGE}"
-"${CLI}" build -t "${APP_IMAGE}" .
+if [[ "${CLI}" == "podman" ]]; then
+  "${CLI}" build --pull=missing -t "${APP_IMAGE}" .
+else
+  "${CLI}" build -t "${APP_IMAGE}" .
+fi
 
 "${CLI}" network exists "${NETWORK_NAME}" >/dev/null 2>&1 || "${CLI}" network create "${NETWORK_NAME}"
 "${CLI}" volume exists "${OLLAMA_VOLUME}" >/dev/null 2>&1 || "${CLI}" volume create "${OLLAMA_VOLUME}"
@@ -138,6 +142,7 @@ done
 if "${CLI}" exec ollama ollama list | grep -q "${OLLAMA_MODEL}"; then
   echo "[remote] Model ${OLLAMA_MODEL} already exists"
 else
+  echo "[remote] Pulling Ollama model ${OLLAMA_MODEL}; this can take a while on first run"
   "${CLI}" exec ollama ollama pull "${OLLAMA_MODEL}"
 fi
 
